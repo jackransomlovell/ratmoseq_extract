@@ -111,22 +111,21 @@ def extract_chunk(
         'strel_min': strel_min,
         'progress_bar': progress_bar,
     }
+    
+    # get the sam2 predictor
+    predictor = get_sam2_predictor(sam2_checkpoint)
+    # TODO if somehow detect centroid if not DLC keypoints
 
-    if sam2:
-        # get the sam2 predictor
-        predictor = get_sam2_predictor(sam2_checkpoint)
-        # TODO if somehow detect centroid if not DLC keypoints
-
-        # get masks from sam2
-        masks, _ = segment_chunk(
-            chunk, 
-            predictor, 
-            sam2_points, 
-            clean_params, 
-            inference_state=None
-            )
-        # apply masks to chunk
-        chunk = chunk * masks
+    # get masks from sam2
+    masks, _ = segment_chunk(
+        chunk, 
+        predictor, 
+        sam2_points, 
+        clean_params, 
+        inference_state=None
+        )
+    # apply masks to chunk
+    chunk = chunk * masks
     
 
     # Denoise the frames before we do anything else
@@ -143,11 +142,9 @@ def extract_chunk(
     )
 
     # now get the centroid and orientation of the mouse
-    features, mask = get_frame_features(
+    features, _ = get_frame_features(
         filtered_frames,
         frame_threshold=min_height,
-        mask=ll,
-        mask_threshold=mask_threshold,
         use_cc=use_cc,
         progress_bar=progress_bar,
     )
@@ -165,16 +162,9 @@ def extract_chunk(
         filtered_frames, features, crop_size=crop_size, progress_bar=progress_bar
     )
 
-    # Compute crop-rotated frame mask
-    if use_tracking_model:
-        use_parameters = deepcopy(parameters)
-        use_parameters["mean"][:, 0] = crop_size[1] // 2
-        use_parameters["mean"][:, 1] = crop_size[0] // 2
-        mask = em_get_ll(cropped_frames, progress_bar=progress_bar, **use_parameters)
-    else:
-        mask = crop_and_rotate_frames(
-            mask, features, crop_size=crop_size, progress_bar=progress_bar
-        )
+    masks = crop_and_rotate_frames(
+        masks, features, crop_size=crop_size, progress_bar=progress_bar
+    )
 
     # Orient mouse to face east
     if flip_classifier:
@@ -191,7 +181,7 @@ def extract_chunk(
         cropped_filtered_frames[flip_indices] = np.rot90(
             cropped_filtered_frames[flip_indices], k=2, axes=(1, 2)
         )
-        mask[flip_indices] = np.rot90(mask[flip_indices], k=2, axes=(1, 2))
+        masks[flip_indices] = np.rot90(masks[flip_indices], k=2, axes=(1, 2))
         features["orientation"][flips] += np.pi
 
     else:
@@ -220,10 +210,9 @@ def extract_chunk(
     results = {
         "chunk": chunk,
         "depth_frames": cropped_frames,
-        "mask_frames": mask,
+        "mask_frames": masks,
         "scalars": scalars,
-        "flips": flips,
-        "parameters": parameters,
+        "flips": flips
     }
 
     return results
