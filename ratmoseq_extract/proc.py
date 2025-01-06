@@ -13,11 +13,292 @@ import scipy.interpolate
 import skimage.morphology
 from copy import deepcopy
 from tqdm.auto import tqdm
-import moseq2_extract.io.video
-import moseq2_extract.extract.roi
+import warnings
 from os.path import exists, join, dirname
-from ratmoseq_extract.io.image import read_image, write_image
-from ratmoseq_extract.util import convert_pxs_to_mm, strided_app
+from ratmoseq_extract.io import read_image, write_image, load_movie_data, get_movie_info
+# from ratmoseq_extract.util import convert_pxs_to_mm, strided_app
+
+def plane_fit3(points):
+    """
+    Fit a plane to 3 points (min number of points for fitting a plane)
+
+    Args:
+    points (numpy.ndarray): each row is a group of points, columns correspond to x,y,z.
+
+    Returns:
+    plane (numpy.array): linear plane fit-->a*x+b*y+c*z+d
+    """
+
+    a = points[1] - points[0]
+    b = points[2] - points[0]
+    # cross prod to make sure the three points make an area, hence a plane.
+    normal = np.array(
+        [
+            [a[1] * b[2] - a[2] * b[1]],
+            [a[2] * b[0] - a[0] * b[2]],
+            [a[0] * b[1] - a[1] * b[0]],
+        ]
+    ).astype("float")
+    denom = np.sum(np.square(normal)).astype("float")
+    if denom < np.spacing(1):
+        plane = np.empty((4,))
+        plane[:] = np.nan
+    else:
+        normal /= np.sqrt(denom)
+        d = np.dot(-points[0], normal)
+        plane = np.hstack((normal.flatten(), d))
+
+    return plane
+
+def plane_ransac(
+    depth_image,
+    bg_roi_depth_range=(900, 1000),
+    iters=1000,
+    noise_tolerance=30,
+    in_ratio=0.1,
+    progress_bar=False,
+    mask=None,
+    **kwargs,
+):
+    """
+    Fit a plane using a naive RANSAC implementation
+
+    Args:
+    depth_image (numpy.ndarray): background image to fit plane to
+    bg_roi_depth_range (tuple): min/max depth (mm) to consider pixels for plane
+    iters (int): number of RANSAC iterations
+    noise_tolerance (float): distance from plane to consider a point an inlier
+    in_ratio (float): fraction of points required to consider a plane fit good
+    progress_bar (bool): display progress bar
+    mask (numpy.ndarray): boolean mask to find region to use
+    kwargs (dict): dictionary containing extra keyword arguments from moseq2_extract.proc.get_roi()
+
+    Returns:
+    best_plane (numpy.array): plane fit to data
+    dist (numpy.array): distance of the calculated coordinates and "best plane"
+    """
+
+    use_points = np.logical_and(
+        depth_image > bg_roi_depth_range[0], depth_image < bg_roi_depth_range[1]
+    )
+    if np.sum(use_points) <= 10:
+        raise ValueError(
+            f'Too few datapoints exist within given "bg roi depth range" {bg_roi_depth_range} -- data point count: {np.sum(use_points)}.'
+            "Please adjust this parameter to fit your recording sessions."
+        )
+
+    if mask is not None:
+        use_points = np.logical_and(use_points, mask)
+
+    xx, yy = np.meshgrid(
+        np.arange(depth_image.shape[1]), np.arange(depth_image.shape[0])
+    )
+
+    coords = np.vstack(
+        (
+            xx[use_points].ravel(),
+            yy[use_points].ravel(),
+            depth_image[use_points].ravel(),
+        )
+    )
+    coords = coords.T
+
+    best_dist = np.inf
+    best_num = 0
+
+    npoints = np.sum(use_points)
+
+    for _ in tqdm(range(iters), disable=not progress_bar, desc="Finding plane"):
+
+        sel = coords[np.random.choice(coords.shape[0], 3, replace=True)]
+        tmp_plane = plane_fit3(sel)
+
+        if np.all(np.isnan(tmp_plane)):
+            continue
+
+        dist = np.abs(np.dot(coords, tmp_plane[:3]) + tmp_plane[3])
+        inliers = dist < noise_tolerance
+        ninliers = np.sum(inliers)
+
+        if (
+            (ninliers / npoints) > in_ratio
+            and ninliers > best_num
+            and np.mean(dist) < best_dist
+        ):
+            best_dist = np.mean(dist)
+            best_num = ninliers
+            best_plane = tmp_plane
+
+    # fit the plane to our x,y,z coordinates
+    coords = np.vstack((xx.ravel(), yy.ravel(), depth_image.ravel())).T
+    dist = np.abs(np.dot(coords, best_plane[:3]) + best_plane[3])
+
+    return best_plane, dist
+
+def compute_plane_bground(frames_file, finfo, bg_roi_depth_range=(900, 1000), **kwargs):
+    """
+    Compute plane background image from video file.
+
+    Args:
+    frame_shape (numpy.ndarray): shape of the frame
+    plane (numpy.ndarray): plane parameters
+
+    Returns:
+    plane_im (numpy.ndarray): plane background image
+    """
+
+    depth_image = load_movie_data(
+        frames_file,
+        0,
+        frame_size=finfo['dims'],
+        finfo=finfo,
+        **kwargs,
+        ).squeeze()
+    frame_shape = depth_image.shape
+
+    plane, _ = plane_ransac(depth_image, bg_roi_depth_range, **kwargs)
+
+    xx, yy = np.meshgrid(np.arange(frame_shape.shape[1]), np.arange(frame_shape.shape[0]))
+    coords = np.vstack((xx.ravel(), yy.ravel()))
+
+    plane_im = (np.dot(coords.T, plane[:2]) + plane[3]) / -plane[2]
+    plane_im = plane_im.reshape(frame_shape)
+
+
+    return plane_im, depth_image
+
+def compute_median_bground(frames_file, frame_stride=500, med_scale=5, finfo=None, **kwargs):
+    """
+    Compute median background image from video file.
+
+    Args:
+    frames_file (str): path to the depth video
+    frame_stride (int): stride size between frames for median bground calculation
+    med_scale (int): kernel size for median blur for background images.
+    kwargs (dict): extra keyword arguments
+
+    Returns:
+    bground (numpy.ndarray): background
+    frame_store[0] (numpy.ndarray): first frame
+    """
+
+    frame_idx = np.arange(0, finfo['nframes'], frame_stride)
+    frame_store = []
+    for i, frame in enumerate(frame_idx):
+        frs = load_movie_data(frames_file,
+                            [int(frame)], 
+                            frame_size=finfo['dims'], 
+                            finfo=finfo, 
+                            **kwargs).squeeze()
+        frame_store.append(cv2.medianBlur(frs, med_scale))
+
+    bground = np.nanmedian(frame_store, axis=0)
+
+    return bground, frame_store[0]
+
+def get_bground(frames_file, 
+                bground_type='median', 
+                frame_stride=500, 
+                med_scale=5, 
+                bg_roi_depth_range=(900, 1000),
+                output_dir=None, 
+                **kwargs):
+    """
+    Compute median or plane background image from video file.
+
+    Args:
+    frames_file (str): path to the depth video
+    bground_type (str): type of background to compute
+    frame_stride (int): stride size between frames for median bground calculation
+    med_scale (int): kernel size for median blur for background images.
+    output_dir (str): output directory to save background image
+    kwargs (dict): extra keyword arguments
+
+    Returns:
+    bground (numpy.ndarray): background image
+    first_frame (numpy.ndarray): first frame of video
+    """
+    
+    if output_dir is None:
+        bground_path = join(dirname(frames_file), 'proc', 'bground.tiff')
+    else:
+        bground_path = join(output_dir, 'bground.tiff')
+
+    finfo = get_movie_info(frames_file, **kwargs)
+    if bground_type == 'median':
+        bground, first_frame = compute_median_bground(frames_file, frame_stride, med_scale, finfo, **kwargs)
+        write_image(bground_path, bground, scale=True)
+    else:
+        plane, _ = plane_ransac(finfo['dims'], **kwargs)
+        bground, first_frame = compute_plane_bground(frames_file, finfo, bg_roi_depth_range, **kwargs)
+
+    write_image(bground_path, bground, scale=True)
+    
+    return bground, first_frame
+
+def get_strels(config_data):
+    """
+    Get dictionary object of cv2 StructuringElements for image filtering given
+    a dict of configurations parameters.
+
+    Args:
+    config_data (dict): dict containing cv2 Structuring Element parameters
+
+    Returns:
+    str_els (dict): dict containing cv2 StructuringElements used for image filtering
+    """
+
+    str_els = {
+        'strel_dilate': select_strel(config_data['bg_roi_shape'], tuple(config_data['bg_roi_dilate'])),
+        'strel_erode': select_strel(config_data['bg_roi_shape'], tuple(config_data['bg_roi_erode'])),
+        'strel_tail': select_strel(config_data['tail_filter_shape'], tuple(config_data['tail_filter_size'])),
+        'strel_min': select_strel(config_data['cable_filter_shape'], tuple(config_data['cable_filter_size']))
+    }
+
+    return str_els
+
+def select_strel(string='e', size=(10, 10)):
+    """
+    Returns structuring element of specified shape.
+
+    Args:
+    string (str): string to indicate whether to use ellipse or rectangle
+    size (tuple): size of structuring element
+
+    Returns:
+    strel (cv2.StructuringElement): selected cv2 StructuringElement to use in video filtering or ROI dilation/erosion.
+    """
+
+    if string[0].lower() == 'e':
+        strel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, size)
+    elif string[0].lower() == 'r':
+        strel = cv2.getStructuringElement(cv2.MORPH_RECT, size)
+    else:
+        strel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, size)
+
+    return strel
+
+def check_filter_sizes(config_data):
+    """
+    Ensure spatial and temporal filter kernel sizes are odd numbers.
+
+    Args:
+    config_data (dict): a dictionary holding all extraction parameters
+
+    Returns:
+    config_data (dict): Updated configuration dict
+
+    """
+
+    # Ensure filter kernel sizes are odd
+    if config_data['spatial_filter_size'][0] % 2 == 0 and config_data['spatial_filter_size'][0] > 0:
+        warnings.warn("Spatial Filter Size must be an odd number. Incrementing value by 1.")
+        config_data['spatial_filter_size'][0] += 1
+    if config_data['temporal_filter_size'][0] % 2 == 0 and config_data['temporal_filter_size'][0] > 0:
+        config_data['temporal_filter_size'][0] += 1
+        warnings.warn("Spatial Filter Size must be an odd number. Incrementing value by 1.")
+
+    return config_data
 
 
 def get_flips(frames, flip_file=None, smoothing=None):
@@ -84,53 +365,6 @@ def get_largest_cc(frames, progress_bar=False):
         foreground_obj[i] = output == szs[1:].argmax()+1
 
     return foreground_obj
-
-
-def get_bground_im_file(frames_file, frame_stride=500, med_scale=5, output_dir=None, **kwargs):
-    """
-    Load or compute background from file.
-
-    Args:
-    frames_file (str): path to the depth video
-    frame_stride (int): stride size between frames for median bground calculation
-    med_scale (int): kernel size for median blur for background images.
-    kwargs (dict): extra keyword arguments
-
-    Returns:
-    bground (numpy.ndarray): background image
-    """
-
-    if output_dir is None:
-        bground_path = join(dirname(frames_file), 'proc', 'bground.tiff')
-    else:
-        bground_path = join(output_dir, 'bground.tiff')
-
-    if type(frames_file) is not tarfile.TarFile:
-        kwargs = deepcopy(kwargs)
-    finfo = kwargs.pop('finfo', None)
-
-    # Compute background image if it doesn't exist. Otherwise, load from file
-    if not exists(bground_path) or kwargs.get('recompute_bg', False):
-        if finfo is None:
-            finfo = moseq2_extract.io.video.get_movie_info(frames_file, **kwargs)
-
-        frame_idx = np.arange(0, finfo['nframes'], frame_stride)
-        frame_store = []
-        for i, frame in enumerate(frame_idx):
-            frs = moseq2_extract.io.video.load_movie_data(frames_file,
-                                                          [int(frame)], 
-                                                          frame_size=finfo['dims'], 
-                                                          finfo=finfo, 
-                                                          **kwargs).squeeze()
-            frame_store.append(cv2.medianBlur(frs, med_scale))
-
-        bground = np.nanmedian(frame_store, axis=0)
-
-        write_image(bground_path, bground, scale=True)
-    else:
-        bground = read_image(bground_path, scale=True)
-        
-    return bground
 
 
 def get_bbox(roi):
