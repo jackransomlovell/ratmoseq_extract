@@ -7,13 +7,14 @@ import click
 import ruamel.yaml as yaml
 from tqdm.auto import tqdm
 from copy import deepcopy
+from ratmoseq_extract.extract import run_extraction
 from moseq2_extract.util import (
     command_with_config,
     read_yaml,
     recursive_find_unextracted_dirs,
 )
 from moseq2_extract.helpers.wrappers import (
-    run_extraction,
+    # run_extraction,
     flip_file_wrapper,
     generate_index,
     aggregate_extract_results,
@@ -38,6 +39,7 @@ click.core.Option.__init__ = new_init
 @click.version_option()
 def cli():
     pass
+
 
 def common_avi_options(function):
     """
@@ -92,7 +94,7 @@ def extract_options(function):
     function = click.option(
         "--crop-size",
         "-c",
-        default=(80, 80),
+        default=(256, 256),
         type=(int, int),
         help="Width and height of cropped mouse image",
     )(function)
@@ -111,7 +113,7 @@ def extract_options(function):
     )(function)
     function = click.option(
         "--max-height",
-        default=120,
+        default=310,
         type=int,
         help="Max mouse height threshold from floor (mm)",
     )(function)
@@ -134,63 +136,15 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     )(function)
     function = click.option(
         "--flip-classifier-smoothing",
-        default=51,
+        default=None,
         type=int,
         help="Number of frames to smooth flip classifier probabilities",
-    )(function)
-    function = click.option(
-        "--graduate-walls",
-        default=False,
-        type=bool,
-        help="Graduates and dilates the background image to compensate for slanted bucket walls. \\_/",
-    )(function)
-    function = click.option(
-        "--widen-radius",
-        default=0,
-        type=int,
-        help="Number of pixels to increase/decrease radius by when graduating bucket walls.",
     )(function)
     function = click.option(
         "--use-cc",
         default=True,
         type=bool,
         help="Extract features using largest connected components.",
-    )(function)
-    function = click.option(
-        "--use-tracking-model",
-        default=False,
-        type=bool,
-        help="Use an expectation-maximization style model to aid mouse tracking. Useful for data with cables",
-    )(function)
-    function = click.option(
-        "--tracking-model-ll-threshold",
-        default=-100,
-        type=float,
-        help="Threshold on log-likelihood for pixels to use for update during tracking",
-    )(function)
-    function = click.option(
-        "--tracking-model-mask-threshold",
-        default=-16,
-        type=float,
-        help="Threshold on log-likelihood to include pixels for centroid and angle calculation",
-    )(function)
-    function = click.option(
-        "--tracking-model-ll-clip",
-        default=-100,
-        type=float,
-        help="Clip log-likelihoods below this value",
-    )(function)
-    function = click.option(
-        "--tracking-model-segment",
-        default=True,
-        type=bool,
-        help="Segment likelihood mask from tracking model",
-    )(function)
-    function = click.option(
-        "--tracking-model-init",
-        default="raw",
-        type=str,
-        help="Method for tracking model initialization",
     )(function)
     function = click.option(
         "--cable-filter-iters",
@@ -217,7 +171,7 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
         help="Number of tail filter iterations",
     )(function)
     function = click.option(
-        "--tail-filter-size", default=(9, 9), type=(int, int), help="Tail filter size"
+        "--tail-filter-size", default=(15, 15), type=(int, int), help="Tail filter size"
     )(function)
     function = click.option(
         "--tail-filter-shape", default="ellipse", type=str, help="Tail filter shape"
@@ -252,8 +206,8 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     )(function)
     function = click.option(
         "--frame-dtype",
-        default="uint8",
-        type=click.Choice(["uint8", "uint16"]),
+        default="int",
+        type=click.Choice(["uint8", "uint16", "int"]),
         help="Data type for processed frames",
     )(function)
     function = click.option(
@@ -266,18 +220,6 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
         default="gray16le",
         type=str,
         help="Pixel format for reading in .avi and .mkv videos",
-    )(function)
-    function = click.option(
-        "--centroid-hampel-span", default=0, type=int, help="Hampel filter span"
-    )(function)
-    function = click.option(
-        "--centroid-hampel-sig", default=3, type=float, help="Hampel filter sig"
-    )(function)
-    function = click.option(
-        "--angle-hampel-span", default=0, type=int, help="Angle filter span"
-    )(function)
-    function = click.option(
-        "--angle-hampel-sig", default=3, type=float, help="Angle filter sig"
     )(function)
     function = click.option(
         "--model-smoothing-clips",
@@ -312,9 +254,6 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
         help="Will skip the extraction if it is already completed.",
     )(function)
     function = click.option(
-        "--sam2", is_flag=True, help="Use SAM2 to predict segment mouse"
-    )(function)
-    function = click.option(
         "--sam2-checkpoint",
         type=click.Path(),
         default=None,
@@ -328,6 +267,7 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     )(function)
 
     return function
+
 
 @cli.command(
     name="extract",
@@ -346,7 +286,7 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
 @extract_options
 def extract(input_file, output_dir, num_frames, skip_completed, **config_data):
 
-    extract_wrapper(
+    run_extraction(
         input_file, output_dir, config_data, num_frames=num_frames, skip=skip_completed
     )
 
