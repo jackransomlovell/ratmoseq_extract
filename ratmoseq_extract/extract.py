@@ -10,11 +10,13 @@ from pathlib import Path
 import uuid
 import os
 from os import dirname
-from os.path import join, exists
+from os.path import join, exists, abspath, basename
+from os import makedirs, system
 import warnings
 import ruamel.yaml as yaml
 import numpy as np
 import h5py
+
 
 from ratmoseq_extract.extract import extract_chunk
 from ratmoseq_extract.sam2 import get_sam2_predictor, segment_chunk, load_dlc
@@ -492,3 +494,137 @@ def extract_chunk(
     }
 
     return results
+
+
+def filter_warnings(func):
+    """
+    Applies warnings.simplefilter() to ignore warnings when
+     running the main gui functionaity in a Jupyter Notebook.
+     The function will filter out: yaml.error.UnsafeLoaderWarning, FutureWarning and UserWarning.
+
+    Args:
+    func (function): function to silence enclosed warnings.
+
+    Returns:
+    apply_warning_filters (func): Returns passed function after warnings filtering is completed.
+    """
+
+    def apply_warning_filters(*args, **kwargs):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", yaml.error.UnsafeLoaderWarning)
+            warnings.simplefilter(action="ignore", category=FutureWarning)
+            warnings.simplefilter(action="ignore", category=UserWarning)
+            return func(*args, **kwargs)
+
+    return apply_warning_filters
+
+
+@filter_warnings
+def run_local_batch_extract(
+    to_extract, config_file, num_frames=None, skip_extracted=False
+):
+    """
+    Run the extract command on given list of sessions to extract on a local platform.
+
+    Args:
+    to_extract (list): list of paths to files to extract
+    config_file (str): path to configuration file containing pre-configured extract and ROI
+    skip_extracted (bool): Whether to skip already extracted session.
+
+    """
+
+    for input_file in tqdm(to_extract, desc="Extracting Sessions"):
+        try:
+            config_data = read_yaml(config_file)
+
+            # Loading individual session config parameters if it exists
+            if exists(config_data.get("session_config_path", "")):
+                session_configs = read_yaml(config_data["session_config_path"])
+                session_key = basename(dirname(input_file))
+
+                # If key is found, update config_data, otherwise, use default dict
+                config_data = session_configs.get(session_key, config_data)
+
+            if output_dir is None:
+                output_dir = config_data.get("output_dir", "proc")
+
+            run_extraction(
+                input_file,
+                output_dir,
+                config_data,
+                num_frames=num_frames,
+                skip=skip_extracted,
+            )
+
+        except Exception as e:
+            print("Unexpected error:", e)
+            print("could not extract", input_file)
+
+
+def run_slurm_batch_extract(input_dir, to_extract, config_data, skip_extracted=False):
+
+    assert (
+        "extract_out_script" in config_data
+    ), "Need to supply extract_out_script to save extract commands"
+    # expand input_dir absolute path
+    input_dir = abspath(input_dir)
+
+    # make session_specific config file and save it in proc folder if session config exists
+    if exists(config_data.get("session_config_path", "")):
+        session_configs = read_yaml(config_data["session_config_path"])
+        for depth_file in to_extract:
+            output_dir = join(dirname(depth_file), config_data["output_dir"])
+
+            # ensure output_dir exists
+            if not exists(output_dir):
+                makedirs(output_dir)
+
+            # get and write session-specific parameters
+            output_file = join(output_dir, "config.yaml")
+            session_key = basename(dirname(depth_file))
+
+            with open(output_file, "w") as f:
+                yaml.safe_dump(session_configs.get(session_key, config_data), f)
+
+    # Construct sbatch command for slurm
+    commands = ""
+    for depth_file in to_extract:
+        output_dir = join(dirname(depth_file), config_data["output_dir"])
+
+        # skip session if skip_extracted is true and the session is already extracted
+        if skip_extracted and check_completion_status(
+            join(output_dir, "results_00.yaml")
+        ):
+            continue
+
+        # set up config file
+        if exists(config_data.get("session_config_path", "")):
+            config_file = join(output_dir, "config.yaml")
+        else:
+            config_file = config_data["config_file"]
+
+        # construct command
+        base_command = (
+            f'moseq2-extract extract --config-file {config_file} {depth_file}; "\n'
+        )
+        prefix = f'sbatch -c {config_data["ncpus"] if config_data["ncpus"] > 0 else 1} --mem={config_data["memory"]} '
+        prefix += f'-p {config_data["partition"]} -t {config_data["wall_time"]} --wrap "{config_data["prefix"]}'
+        commands += prefix + base_command
+
+    # Ensure output directory exists
+    config_data["extract_out_script"] = join(
+        input_dir, config_data["extract_out_script"]
+    )
+    with open(config_data["extract_out_script"], "w") as f:
+        f.write(commands)
+    print("Commands saved to:", config_data["extract_out_script"])
+
+    # Print command
+    if config_data["get_cmd"]:
+        print("Listing extract commands...\n")
+        print(commands)
+
+    # Run command using system
+    if config_data["run_cmd"]:
+        print("Running extract commands")
+        system(commands)
