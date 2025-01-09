@@ -4,6 +4,187 @@ import subprocess
 from tqdm import tqdm
 import datetime
 import matplotlib.pyplot as plt
+import ruamel.yaml as yaml
+
+def read_yaml(yaml_file):
+    """
+    Read yaml file into a dictionary
+
+    Args:
+    yaml_file (str): path to yaml file
+
+    Returns:
+    return_dict (dict): dict of yaml contents
+    """
+
+    with open(yaml_file, 'r') as f:
+        return yaml.safe_load(f)
+
+def create_extract_h5(
+    h5_file,
+    acquisition_metadata,
+    config_data,
+    status_dict,
+    scalars_attrs,
+    nframes,
+    roi,
+    bground_im,
+    first_frame,
+    first_frame_idx,
+    last_frame_idx,
+    **kwargs,
+):
+    """
+    write acquisition metadata, extraction metadata, computed scalars, timestamps, and original frames/frames_mask to extracted h5.
+
+    Args:
+    h5_file (h5py.File object): opened h5 file object to write to.
+    acquisition_metadata (dict): Dictionary containing extracted session acquisition metadata.
+    config_data (dict): dictionary object containing all required extraction parameters. (auto generated)
+    status_dict (dict): dictionary that helps indicate if the session has been extracted fully.
+    scalars_attrs (dict): dict of computed scalar attributes and descriptions to save.
+    nframes (int): number of frames being recorded
+    roi (np.ndarray): Computed 2D ROI Image.
+    bground_im (np.ndarray): Computed 2D Background Image.
+    first_frame (np.ndarray): Computed 2D First Frame Image.
+    timestamps (numpy.array): Array of session timestamps.
+    kwargs (dict): additional keyword arguments.
+
+    """
+
+    h5_file.create_dataset("metadata/uuid", data=status_dict["uuid"])
+
+    # Creating scalar dataset
+    for scalar in list(scalars_attrs.keys()):
+        h5_file.create_dataset(
+            f"scalars/{scalar}", (nframes,), "float32", compression="gzip"
+        )
+        h5_file[f"scalars/{scalar}"].attrs["description"] = scalars_attrs[scalar]
+
+    # Timestamps
+    if config_data.get("timestamps") is not None:
+        h5_file.create_dataset(
+            "timestamps",
+            compression="gzip",
+            data=config_data["timestamps"][first_frame_idx:last_frame_idx],
+        )
+        h5_file["timestamps"].attrs["description"] = "Depth video timestamps"
+
+    # Cropped Frames
+    h5_file.create_dataset(
+        "frames",
+        (nframes, config_data["crop_size"][0], config_data["crop_size"][1]),
+        config_data["frame_dtype"],
+        compression="gzip",
+    )
+    h5_file["frames"].attrs["description"] = (
+        "3D Numpy array of depth frames (nframes x w x h)." + " Depth values are in mm."
+    )
+    # Frame Masks for EM Tracking
+    if config_data["use_tracking_model"]:
+        h5_file.create_dataset(
+            "frames_mask",
+            (nframes, config_data["crop_size"][0], config_data["crop_size"][1]),
+            "float32",
+            compression="gzip",
+        )
+        h5_file["frames_mask"].attrs[
+            "description"
+        ] = "Log-likelihood values from the tracking model (nframes x w x h)"
+    else:
+        h5_file.create_dataset(
+            "frames_mask",
+            (nframes, config_data["crop_size"][0], config_data["crop_size"][1]),
+            "bool",
+            compression="gzip",
+        )
+        h5_file["frames_mask"].attrs[
+            "description"
+        ] = "Boolean mask, false=not mouse, true=mouse"
+
+    # Flip Classifier
+    if config_data["flip_classifier"] is not None:
+        h5_file.create_dataset(
+            "metadata/extraction/flips", (nframes,), "bool", compression="gzip"
+        )
+        h5_file["metadata/extraction/flips"].attrs[
+            "description"
+        ] = "Output from flip classifier, false=no flip, true=flip"
+
+    # True Depth
+    h5_file.create_dataset(
+        "metadata/extraction/true_depth", data=config_data["true_depth"]
+    )
+    h5_file["metadata/extraction/true_depth"].attrs[
+        "description"
+    ] = "Detected true depth of arena floor in mm"
+
+    # ROI
+    h5_file.create_dataset("metadata/extraction/roi", data=roi, compression="gzip")
+    h5_file["metadata/extraction/roi"].attrs["description"] = "ROI mask"
+
+    # First Frame
+    h5_file.create_dataset(
+        "metadata/extraction/first_frame", data=first_frame[0], compression="gzip"
+    )
+    h5_file["metadata/extraction/first_frame"].attrs[
+        "description"
+    ] = "First frame of depth dataset"
+
+    # First Frame index
+    h5_file.create_dataset(
+        "metadata/extraction/first_frame_idx",
+        data=[first_frame_idx],
+        compression="gzip",
+    )
+    h5_file["metadata/extraction/first_frame_idx"].attrs[
+        "description"
+    ] = "First frame index of this dataset"
+
+    # Last Frame index
+    h5_file.create_dataset(
+        "metadata/extraction/last_frame_idx", data=[last_frame_idx], compression="gzip"
+    )
+    h5_file["metadata/extraction/last_frame_idx"].attrs[
+        "description"
+    ] = "Last frame index of this dataset"
+
+    # Background
+    h5_file.create_dataset(
+        "metadata/extraction/background", data=bground_im, compression="gzip"
+    )
+    h5_file["metadata/extraction/background"].attrs[
+        "description"
+    ] = "Computed background image"
+
+    # Extract Version
+    extract_version = np.string_(get_distribution("moseq2-extract").version)
+    h5_file.create_dataset("metadata/extraction/extract_version", data=extract_version)
+    h5_file["metadata/extraction/extract_version"].attrs[
+        "description"
+    ] = "Version of moseq2-extract"
+
+    # Extraction Parameters
+    from moseq2_extract.cli import extract
+
+    dict_to_h5(
+        h5_file,
+        status_dict["parameters"],
+        "metadata/extraction/parameters",
+        click_param_annot(extract),
+    )
+
+    # Acquisition Metadata
+    for key, value in acquisition_metadata.items():
+        if type(value) is list and len(value) > 0 and type(value[0]) is str:
+            value = [n.encode("utf8") for n in value]
+
+        if value is not None:
+            h5_file.create_dataset(f"metadata/acquisition/{key}", data=value)
+        else:
+            h5_file.create_dataset(f"metadata/acquisition/{key}", dtype="f")
+
+
 
 def write_extracted_chunk_to_h5(
     h5_file, results, config_data, scalars, frame_range, offset
@@ -72,6 +253,244 @@ def make_output_movie(results, config_data, offset=0):
     output_movie = (output_movie / output_movie.max() * 255).astype("uint8")
 
     return output_movie
+
+def handle_extract_metadata(input_file, dirname):
+    """
+    Extract metadata and timestamp in the extraction.
+
+    Args:
+    input_file (str): path to input file to extract
+    dirname (str): path to directory where extraction files reside.
+
+    Returns:
+    acquisition_metadata (dict): key-value pairs of JSON contents
+    timestamps (1D array): list of loaded timestamps
+    tar (bool): indicator for whether the file is compressed.
+    """
+
+    tar = None
+    tar_members = None
+    alternate_correct = False
+    from_depth_file = False
+
+    # Handle TAR files
+    if input_file.endswith((".tar.gz", ".tgz")):
+        print(f"Scanning tarball {input_file} (this will take a minute)")
+        # compute NEW psuedo-dirname now, `input_file` gets overwritten below with test_vid.dat tarinfo...
+        dirname = join(
+            dirname, basename(input_file).replace(".tar.gz", "").replace(".tgz", "")
+        )
+
+        tar = tarfile.open(input_file, "r:gz")
+        tar_members = tar.getmembers()
+        tar_names = [_.name for _ in tar_members]
+
+    if tar is not None:
+        # Handling tar paths
+        metadata_path = tar.extractfile(tar_members[tar_names.index("metadata.json")])
+        if "depth_ts.txt" in tar_names:
+            timestamp_path = tar.extractfile(
+                tar_members[tar_names.index("depth_ts.txt")]
+            )
+        elif "timestamps.csv" in tar_names:
+            timestamp_path = tar.extractfile(
+                tar_members[tar_names.index("timestamps.csv")]
+            )
+            alternate_correct = True
+    else:
+        # Handling non-compressed session paths
+        metadata_path = join(dirname, "metadata.json")
+        timestamp_path = join(dirname, "depth_ts.txt")
+        alternate_timestamp_path = join(dirname, "timestamps.csv")
+        # Checks for alternative timestamp file if original .txt extension does not exist
+        if not exists(timestamp_path) and exists(alternate_timestamp_path):
+            timestamp_path = alternate_timestamp_path
+            alternate_correct = True
+        elif not (
+            exists(timestamp_path) or exists(alternate_timestamp_path)
+        ) and input_file.endswith(".mkv"):
+            from_depth_file = True
+
+    acquisition_metadata = load_metadata(metadata_path)
+    if not from_depth_file:
+        timestamps = load_timestamps(timestamp_path, col=0, alternate=alternate_correct)
+    else:
+        timestamps = load_timestamps_from_movie(input_file)
+
+    return acquisition_metadata, timestamps, tar
+
+def get_movie_info(
+    filename, frame_size=(512, 424), bit_depth=16, mapping="DEPTH", threads=8, **kwargs
+):
+    """
+    Return dict of movie metadata.
+
+    Args:
+    filename (str): path to video file
+    frame_dims (tuple): video dimensions
+    bit_depth (int): integer indicating data type encoding
+    mapping (str): the stream to read from mkv files
+    threads (int): number of threads to simultaneously read timestamps stored within the raw data file.
+
+    Returns:
+    metadata (dict): dictionary containing video file metadata
+    """
+
+    try:
+        if type(filename) is tarfile.TarFile:
+            metadata = get_raw_info(
+                filename, frame_size=frame_size, bit_depth=bit_depth
+            )
+        elif filename.lower().endswith(".dat"):
+            metadata = get_raw_info(
+                filename, frame_size=frame_size, bit_depth=bit_depth
+            )
+        elif filename.lower().endswith((".avi", ".mkv")):
+            metadata = get_video_info(
+                filename, mapping=mapping, threads=threads, **kwargs
+            )
+    except AttributeError as e:
+        print("Error reading movie metadata:", e)
+        metadata = {}
+
+    return metadata
+
+def get_frame_range_indices(trim_beginning, trim_ending, nframes):
+    """
+    Compute the total number of frames to be extracted, and find the start and end indices.
+
+    Args:
+    trim_beginning (int): number of frames to remove from beginning of recording
+    trim_ending (int): number of frames to remove from ending of recording
+    nframes (int): total number of requested frames to extract
+
+    Returns:
+    nframes (int): total number of frames to extract
+    first_frame_idx (int): index of the frame to begin extraction from
+    last_frame_idx (int): index of the last frame in the extraction
+    """
+    assert all((trim_ending >= 0, trim_beginning >= 0)) , "frame_trim arguments must be greater than or equal to 0!"
+
+    first_frame_idx = 0
+    if trim_beginning > 0 and trim_beginning < nframes:
+        first_frame_idx = trim_beginning
+
+    last_frame_idx = nframes
+    if first_frame_idx < (nframes - trim_ending) and trim_ending > 0:
+        last_frame_idx = nframes - trim_ending
+
+    total_frames = last_frame_idx - first_frame_idx
+
+    return total_frames, first_frame_idx, last_frame_idx
+
+def scalar_attributes():
+    """
+    Gets scalar attributes dict with names paired with descriptions.
+
+    Returns:
+    attributes (dict): a dictionary of metadata keys and descriptions.
+    """
+
+    attributes = {
+        'centroid_x_px': 'X centroid (pixels)',
+        'centroid_y_px': 'Y centroid (pixels)',
+        'velocity_2d_px': '2D velocity (pixels / frame), note that missing frames are not accounted for',
+        'velocity_3d_px': '3D velocity (pixels / frame), note that missing frames are not accounted for, also height is in mm, not pixels for calculation',
+        'width_px': 'Mouse width (pixels)',
+        'length_px': 'Mouse length (pixels)',
+        'area_px': 'Mouse area (pixels)',
+        'centroid_x_mm': 'X centroid (mm)',
+        'centroid_y_mm': 'Y centroid (mm)',
+        'velocity_2d_mm': '2D velocity (mm / frame), note that missing frames are not accounted for',
+        'velocity_3d_mm': '3D velocity (mm / frame), note that missing frames are not accounted for',
+        'width_mm': 'Mouse width (mm)',
+        'length_mm': 'Mouse length (mm)',
+        'area_mm': 'Mouse area (mm)',
+        'height_ave_mm': 'Mouse average height (mm)',
+        'angle': 'Angle (radians, unwrapped)',
+        'velocity_theta': 'Angular component of velocity (arctan(vel_x, vel_y))'
+    }
+
+    return attributes
+
+def gen_batch_sequence(nframes, chunk_size, overlap, offset=0):
+    """
+    Generates batches used to chunk videos prior to extraction.
+
+    Args:
+    nframes (int): total number of frames
+    chunk_size (int): the number of desired chunk size
+    overlap (int): number of overlapping frames
+    offset (int): frame offset
+
+    Returns:
+    out (list): the list of batches
+    """
+
+    seq = range(offset, nframes)
+    out = []
+    for i in range(0, len(seq) - overlap, chunk_size - overlap):
+        out.append(seq[i:i + chunk_size])
+    return out
+
+def read_yaml(yaml_file):
+    """
+    Read yaml file into a dictionary
+
+    Args:
+    yaml_file (str): path to yaml file
+
+    Returns:
+    return_dict (dict): dict of yaml contents
+    """
+
+    with open(yaml_file, 'r') as f:
+        return yaml.safe_load(f)
+
+def write_image(
+    filename, image, scale=True, scale_factor=None, frame_dtype="uint16", compress=0
+):
+    """
+    Save image data.
+
+    Args:
+    filename (str): path to output file
+    image (numpy.ndarray): the (unscaled) 2-D image to save
+    scale (bool): flag to scale the image between the bounds of `dtype`
+    scale_factor (int): factor by which to scale image
+    frame_dtype (str): array data type
+    compress (int): image compression level
+
+    """
+
+    file = filename
+
+    metadata = {}
+
+    if scale:
+        max_int = np.iinfo(frame_dtype).max
+
+        if not scale_factor:
+            # scale image to `dtype`'s full range
+            scale_factor = int(
+                max_int / (np.nanmax(image) + 1e-25)
+            )  # adding very small value to avoid divide by 0
+            image = image * scale_factor
+        elif isinstance(scale_factor, tuple):
+            image = np.float32(image)
+            image = (image - scale_factor[0]) / (scale_factor[1] - scale_factor[0])
+            image = np.clip(image, 0, 1) * max_int
+
+        metadata = {"scale_factor": str(scale_factor)}
+
+    directory = dirname(file)
+    if not exists(directory):
+        os.makedirs(directory)
+
+    tifffile.imsave(
+        file, image.astype(frame_dtype), compress=compress, metadata=metadata
+    )
+
 
 def write_frames_preview(
     filename,
