@@ -7,22 +7,20 @@ import click
 import ruamel.yaml as yaml
 from tqdm.auto import tqdm
 from copy import deepcopy
-from ratmoseq_extract.extract import run_extraction
-from moseq2_extract.util import (
-    command_with_config,
+from ratmoseq_extract.extract import (
+    run_extraction,
+    run_local_batch_extract,
+    run_slurm_batch_extract,
+)
+from ratmoseq_extract.io import (
     read_yaml,
     recursive_find_unextracted_dirs,
-)
-from moseq2_extract.helpers.wrappers import (
-    # run_extraction,
-    flip_file_wrapper,
     generate_index,
     aggregate_extract_results,
     generate_index_from_agg_res,
     convert_raw_to_avi,
-    copy_slice,
+    download_flip,
 )
-from moseq2_extract.helpers.extract import run_slurm_extract, run_local_extract
 
 orig_init = click.core.Option.__init__
 
@@ -30,6 +28,92 @@ orig_init = click.core.Option.__init__
 def new_init(self, *args, **kwargs):
     orig_init(self, *args, **kwargs)
     self.show_default = True
+
+
+# from https://stackoverflow.com/questions/46358797/
+# python-click-supply-arguments-and-options-from-a-configuration-file
+def command_with_config(config_file_param_name):
+    """
+    Override default CLI variables with the values contained within the config.yaml being passed.
+
+    Args:
+    config_file_param_name (str): path to config file.
+
+    Returns:
+    custom_command_class (function): decorator function to update click.Command parameters with the config_file
+    parameter values.
+    """
+
+    class custom_command_class(click.Command):
+
+        def invoke(self, ctx):
+            # grab the config file
+            config_file = ctx.params[config_file_param_name]
+            param_defaults = {
+                p.human_readable_name: p.default
+                for p in self.params
+                if isinstance(p, click.core.Option)
+            }
+            param_defaults = {
+                k: tuple(v) if type(v) is list else v for k, v in param_defaults.items()
+            }
+            param_cli = {
+                k: tuple(v) if type(v) is list else v for k, v in ctx.params.items()
+            }
+
+            if config_file is not None:
+
+                config_data = read_yaml(config_file)
+                # set config_data['output_file'] ['output_dir'] ['input_dir'] to None to avoid overwriting previous files
+                # assuming users would either input their own paths or use the default path
+                config_data["input_dir"] = None
+                config_data["output_dir"] = None
+                config_data["output_file"] = None
+
+                # modified to only use keys that are actually defined in options and the value is not not none
+                config_data = {
+                    k: tuple(v) if isinstance(v, yaml.comments.CommentedSeq) else v
+                    for k, v in config_data.items()
+                    if k in param_defaults.keys() and v is not None
+                }
+
+                # find differences btw config and param defaults
+                diffs = set(param_defaults.items()) ^ set(param_cli.items())
+
+                # combine defaults w/ config data
+                combined = {**param_defaults, **config_data}
+
+                # update cli params that are non-default
+                keys = [d[0] for d in diffs]
+                for k in set(keys):
+                    combined[k] = ctx.params[k]
+
+                ctx.params = combined
+
+                # add new parameters to the original config file
+                config_data = read_yaml(config_file)
+
+                # remove flags from combined so the flag values in config.yaml won't get overwritten
+                flag_list = [
+                    "manual_set_depth_range",
+                    "use_plane_bground",
+                    "progress_bar",
+                    "delete",
+                    "compute_raw_scalars",
+                    "skip_completed",
+                    "skip_checks",
+                    "get_cmd",
+                    "run_cmd",
+                ]
+                combined = {k: v for k, v in combined.items() if k not in flag_list}
+                # combine original config data and the combined params prioritizing the combined
+                config_data = {**config_data, **combined}
+                # with open(config_file, 'w') as f:
+                #     yaml.safe_dump(config_data, f)
+
+            return super().invoke(ctx)
+
+    return custom_command_class
 
 
 click.core.Option.__init__ = new_init
@@ -382,7 +466,7 @@ def batch_extract(
     if config_data["cluster_type"] == "local":
         # the session specific config doesn't get generated in session proc file
         # session specific config direct used in config_data dictionary in extraction from extract_command function
-        run_local_extract(to_extract, config_file, skip_completed)
+        run_local_batch_extract(to_extract, config_file, skip_completed)
     else:
         # add paramters to config
         config_data["session_config_path"] = (
@@ -397,7 +481,7 @@ def batch_extract(
         config_data["extensions"] = extensions
         config_data["skip_checks"] = skip_checks
         # run slurm extract will generate a config.yaml in session proc file for slurm
-        run_slurm_extract(input_folder, to_extract, config_data, skip_completed)
+        run_slurm_batch_extract(input_folder, to_extract, config_data, skip_completed)
 
 
 @cli.command(
@@ -417,7 +501,7 @@ def batch_extract(
 )
 def download_flip_file(config_file, output_dir):
 
-    flip_file_wrapper(config_file, output_dir)
+    download_flip(config_file, output_dir)
 
 
 @cli.command(
@@ -468,7 +552,7 @@ def generate_config(output_file, camera_type):
 )
 def generate_index(input_dir, output_file):
 
-    output_file = generate_index_wrapper(input_dir, output_file)
+    output_file = generate_index(input_dir, output_file)
 
     if output_file is not None:
         print(f"Index file: {output_file} was successfully generated.")
@@ -499,15 +583,9 @@ def generate_index(input_dir, output_file):
     default=os.path.join(os.getcwd(), "aggregate_results/"),
     help="Location for storing all results together",
 )
-@click.option(
-    "--mouse-threshold",
-    default=0,
-    type=float,
-    help="Threshold value for mean depth to include frames in aggregated results",
-)
 def aggregate_extract_results(input_dir, format, output_dir, mouse_threshold):
 
-    aggregate_extract_results_wrapper(input_dir, format, output_dir, mouse_threshold)
+    aggregate_extract_results(input_dir, format, output_dir)
 
 
 @cli.command(
@@ -523,7 +601,7 @@ def aggregate_extract_results(input_dir, format, output_dir, mouse_threshold):
 )
 def agg_to_index(input_dir):
 
-    generate_index_from_agg_res_wrapper(input_dir)
+    generate_index_from_agg_res(input_dir)
 
 
 @cli.command(
@@ -536,30 +614,8 @@ def convert_raw_to_avi(
     input_file, output_file, chunk_size, fps, delete, threads, mapping
 ):
 
-    convert_raw_to_avi_wrapper(
+    convert_raw_to_avi(
         input_file, output_file, chunk_size, fps, delete, threads, mapping
-    )
-
-
-@cli.command(
-    name="copy-slice",
-    help="Copies a segment of an input depth recording into a new video file.",
-)
-@click.argument("input-file", type=click.Path(exists=True, resolve_path=False))
-@common_avi_options
-@click.option(
-    "-c",
-    "--copy-slice",
-    type=(int, int),
-    default=(0, 1000),
-    help="Slice indices used for copy",
-)
-def copy_slice(
-    input_file, output_file, copy_slice, chunk_size, fps, delete, threads, mapping
-):
-
-    copy_slice_wrapper(
-        input_file, output_file, copy_slice, chunk_size, fps, delete, threads, mapping
     )
 
 
