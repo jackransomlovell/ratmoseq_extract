@@ -14,8 +14,8 @@ from ratmoseq_extract.extract import extract_chunk
 from ratmoseq_extract.sam2 import load_dlc
 from ratmoseq_extract.proc import check_filter_sizes, get_strels, get_bground
 from ratmoseq_extract.io import (
-    write_extracted_chunk_to_h5, 
-    make_output_movie, 
+    write_extracted_chunk_to_h5,
+    make_output_movie,
     load_movie_data,
     write_frames_preview,
     handle_extract_metadata,
@@ -25,8 +25,9 @@ from ratmoseq_extract.io import (
     gen_batch_sequence,
     write_image,
     create_extract_h5,
-    read_yaml
+    read_yaml,
 )
+
 
 def process_extract_batches(
     input_file,
@@ -79,13 +80,8 @@ def process_extract_batches(
 
         # Get crop-rotated frame batch
         results = extract_chunk(
-            **config_data,
-            **str_els,
-            chunk=raw_chunk,
-            roi=roi,
-            bground=bground_im
+            **config_data, **str_els, chunk=raw_chunk, roi=roi, bground=bground_im
         )
-
 
         # Offsetting frame chunk by CLI parameter defined option: chunk_overlap
         frame_range = frame_range[offset:]
@@ -115,6 +111,7 @@ def process_extract_batches(
     if video_pipe is not None:
         video_pipe.communicate()
 
+
 def check_completion_status(status_filename):
     """
     Read a results_00.yaml (status file) and checks whether the session has been
@@ -131,7 +128,8 @@ def check_completion_status(status_filename):
         return read_yaml(status_filename)["complete"]
     return False
 
-def extract_wrapper(input_file, output_dir, config_data, num_frames=None, skip=False):
+
+def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=False):
     """
     Extract depth videos.
 
@@ -244,7 +242,9 @@ def extract_wrapper(input_file, output_dir, config_data, num_frames=None, skip=F
     str_els = get_strels(config_data)
 
     roi = np.ones(config_data["finfo"]["dims"], dtype=np.uint8)
-    bground_im, first_frame = get_bground(input_file, config_data, output_dir=output_dir)
+    bground_im, first_frame = get_bground(
+        input_file, config_data, output_dir=output_dir
+    )
 
     # Debugging option: DTD has no effect on extraction results unless dilate iterations > 1
     if config_data.get("detected_true_depth", "auto") == "auto":
@@ -253,7 +253,6 @@ def extract_wrapper(input_file, output_dir, config_data, num_frames=None, skip=F
         config_data["true_depth"] = int(config_data["detected_true_depth"])
 
     print("Detected true depth:", config_data["true_depth"])
-
 
     extraction_data = {
         "bground_im": bground_im,
