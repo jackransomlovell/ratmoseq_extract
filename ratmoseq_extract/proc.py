@@ -16,7 +16,7 @@ from tqdm.auto import tqdm
 import warnings
 from os.path import exists, join, dirname
 from ratmoseq_extract.io import read_image, write_image, load_movie_data, get_movie_info
-# from ratmoseq_extract.util import convert_pxs_to_mm, strided_app
+
 
 def plane_fit3(points):
     """
@@ -49,6 +49,7 @@ def plane_fit3(points):
         plane = np.hstack((normal.flatten(), d))
 
     return plane
+
 
 def plane_ransac(
     depth_image,
@@ -135,6 +136,7 @@ def plane_ransac(
 
     return best_plane, dist
 
+
 def compute_plane_bground(frames_file, finfo, bg_roi_depth_range=(900, 1000), **kwargs):
     """
     Compute plane background image from video file.
@@ -150,24 +152,28 @@ def compute_plane_bground(frames_file, finfo, bg_roi_depth_range=(900, 1000), **
     depth_image = load_movie_data(
         frames_file,
         0,
-        frame_size=finfo['dims'],
+        frame_size=finfo["dims"],
         finfo=finfo,
         **kwargs,
-        ).squeeze()
+    ).squeeze()
     frame_shape = depth_image.shape
 
     plane, _ = plane_ransac(depth_image, bg_roi_depth_range, **kwargs)
 
-    xx, yy = np.meshgrid(np.arange(frame_shape.shape[1]), np.arange(frame_shape.shape[0]))
+    xx, yy = np.meshgrid(
+        np.arange(frame_shape.shape[1]), np.arange(frame_shape.shape[0])
+    )
     coords = np.vstack((xx.ravel(), yy.ravel()))
 
     plane_im = (np.dot(coords.T, plane[:2]) + plane[3]) / -plane[2]
     plane_im = plane_im.reshape(frame_shape)
 
-
     return plane_im, depth_image
 
-def compute_median_bground(frames_file, frame_stride=500, med_scale=5, finfo=None, **kwargs):
+
+def compute_median_bground(
+    frames_file, frame_stride=500, med_scale=5, finfo=None, **kwargs
+):
     """
     Compute median background image from video file.
 
@@ -182,27 +188,28 @@ def compute_median_bground(frames_file, frame_stride=500, med_scale=5, finfo=Non
     frame_store[0] (numpy.ndarray): first frame
     """
 
-    frame_idx = np.arange(0, finfo['nframes'], frame_stride)
+    frame_idx = np.arange(0, finfo["nframes"], frame_stride)
     frame_store = []
     for i, frame in enumerate(frame_idx):
-        frs = load_movie_data(frames_file,
-                            [int(frame)], 
-                            frame_size=finfo['dims'], 
-                            finfo=finfo, 
-                            **kwargs).squeeze()
+        frs = load_movie_data(
+            frames_file, [int(frame)], frame_size=finfo["dims"], finfo=finfo, **kwargs
+        ).squeeze()
         frame_store.append(cv2.medianBlur(frs, med_scale))
 
     bground = np.nanmedian(frame_store, axis=0)
 
     return bground, frame_store[0]
 
-def get_bground(frames_file, 
-                bground_type='median', 
-                frame_stride=500, 
-                med_scale=5, 
-                bg_roi_depth_range=(900, 1000),
-                output_dir=None, 
-                **kwargs):
+
+def get_bground(
+    frames_file,
+    bground_type="median",
+    frame_stride=500,
+    med_scale=5,
+    bg_roi_depth_range=(900, 1000),
+    output_dir=None,
+    **kwargs,
+):
     """
     Compute median or plane background image from video file.
 
@@ -218,23 +225,28 @@ def get_bground(frames_file,
     bground (numpy.ndarray): background image
     first_frame (numpy.ndarray): first frame of video
     """
-    
+
     if output_dir is None:
-        bground_path = join(dirname(frames_file), 'proc', 'bground.tiff')
+        bground_path = join(dirname(frames_file), "proc", "bground.tiff")
     else:
-        bground_path = join(output_dir, 'bground.tiff')
+        bground_path = join(output_dir, "bground.tiff")
 
     finfo = get_movie_info(frames_file, **kwargs)
-    if bground_type == 'median':
-        bground, first_frame = compute_median_bground(frames_file, frame_stride, med_scale, finfo, **kwargs)
+    if bground_type == "median":
+        bground, first_frame = compute_median_bground(
+            frames_file, frame_stride, med_scale, finfo, **kwargs
+        )
         write_image(bground_path, bground, scale=True)
     else:
-        plane, _ = plane_ransac(finfo['dims'], **kwargs)
-        bground, first_frame = compute_plane_bground(frames_file, finfo, bg_roi_depth_range, **kwargs)
+        plane, _ = plane_ransac(finfo["dims"], **kwargs)
+        bground, first_frame = compute_plane_bground(
+            frames_file, finfo, bg_roi_depth_range, **kwargs
+        )
 
     write_image(bground_path, bground, scale=True)
-    
+
     return bground, first_frame
+
 
 def get_strels(config_data):
     """
@@ -249,15 +261,24 @@ def get_strels(config_data):
     """
 
     str_els = {
-        'strel_dilate': select_strel(config_data['bg_roi_shape'], tuple(config_data['bg_roi_dilate'])),
-        'strel_erode': select_strel(config_data['bg_roi_shape'], tuple(config_data['bg_roi_erode'])),
-        'strel_tail': select_strel(config_data['tail_filter_shape'], tuple(config_data['tail_filter_size'])),
-        'strel_min': select_strel(config_data['cable_filter_shape'], tuple(config_data['cable_filter_size']))
+        "strel_dilate": select_strel(
+            config_data["bg_roi_shape"], tuple(config_data["bg_roi_dilate"])
+        ),
+        "strel_erode": select_strel(
+            config_data["bg_roi_shape"], tuple(config_data["bg_roi_erode"])
+        ),
+        "strel_tail": select_strel(
+            config_data["tail_filter_shape"], tuple(config_data["tail_filter_size"])
+        ),
+        "strel_min": select_strel(
+            config_data["cable_filter_shape"], tuple(config_data["cable_filter_size"])
+        ),
     }
 
     return str_els
 
-def select_strel(string='e', size=(10, 10)):
+
+def select_strel(string="e", size=(10, 10)):
     """
     Returns structuring element of specified shape.
 
@@ -269,14 +290,15 @@ def select_strel(string='e', size=(10, 10)):
     strel (cv2.StructuringElement): selected cv2 StructuringElement to use in video filtering or ROI dilation/erosion.
     """
 
-    if string[0].lower() == 'e':
+    if string[0].lower() == "e":
         strel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, size)
-    elif string[0].lower() == 'r':
+    elif string[0].lower() == "r":
         strel = cv2.getStructuringElement(cv2.MORPH_RECT, size)
     else:
         strel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, size)
 
     return strel
+
 
 def check_filter_sizes(config_data):
     """
@@ -291,12 +313,22 @@ def check_filter_sizes(config_data):
     """
 
     # Ensure filter kernel sizes are odd
-    if config_data['spatial_filter_size'][0] % 2 == 0 and config_data['spatial_filter_size'][0] > 0:
-        warnings.warn("Spatial Filter Size must be an odd number. Incrementing value by 1.")
-        config_data['spatial_filter_size'][0] += 1
-    if config_data['temporal_filter_size'][0] % 2 == 0 and config_data['temporal_filter_size'][0] > 0:
-        config_data['temporal_filter_size'][0] += 1
-        warnings.warn("Spatial Filter Size must be an odd number. Incrementing value by 1.")
+    if (
+        config_data["spatial_filter_size"][0] % 2 == 0
+        and config_data["spatial_filter_size"][0] > 0
+    ):
+        warnings.warn(
+            "Spatial Filter Size must be an odd number. Incrementing value by 1."
+        )
+        config_data["spatial_filter_size"][0] += 1
+    if (
+        config_data["temporal_filter_size"][0] % 2 == 0
+        and config_data["temporal_filter_size"][0] > 0
+    ):
+        config_data["temporal_filter_size"][0] += 1
+        warnings.warn(
+            "Spatial Filter Size must be an odd number. Incrementing value by 1."
+        )
 
     return config_data
 
@@ -327,13 +359,20 @@ def get_flips(frames, flip_file=None, smoothing=None):
             frames.reshape((-1, frames.shape[1] * frames.shape[2]))
         )
     except ValueError:
-        if hasattr(clf, "n_features_") and int(np.sqrt(clf.n_features_)) != frames.shape[-1]:
-            print('WARNING: Input crop-size is not compatible with flip classifier.')
+        if (
+            hasattr(clf, "n_features_")
+            and int(np.sqrt(clf.n_features_)) != frames.shape[-1]
+        ):
+            print("WARNING: Input crop-size is not compatible with flip classifier.")
             accepted_crop = int(np.sqrt(clf.n_features_))
-            print(f'Adjust the crop-size to ({accepted_crop}, {accepted_crop}) to use this flip classifier.')
+            print(
+                f"Adjust the crop-size to ({accepted_crop}, {accepted_crop}) to use this flip classifier."
+            )
         print("Frames shape:", frames.shape)
-        print('The extracted data will NOT be flipped!')
-        probas = np.array([[0]*len(frames), [1]*len(frames)]).T # default output; indicating no flips
+        print("The extracted data will NOT be flipped!")
+        probas = np.array(
+            [[0] * len(frames), [1] * len(frames)]
+        ).T  # default output; indicating no flips
 
     if smoothing:
         for i in range(probas.shape[1]):
@@ -356,13 +395,18 @@ def get_largest_cc(frames, progress_bar=False):
     foreground_obj (numpy.ndarray):  frames x rows x columns, true where blob was found
     """
 
-    foreground_obj = np.zeros((frames.shape), 'bool')
+    foreground_obj = np.zeros((frames.shape), "bool")
 
-    for i in tqdm(range(frames.shape[0]), disable=not progress_bar, desc='Computing largest Connected Component'):
-        nb_components, output, stats, centroids =\
-            cv2.connectedComponentsWithStats(frames[i], connectivity=4)
+    for i in tqdm(
+        range(frames.shape[0]),
+        disable=not progress_bar,
+        desc="Computing largest Connected Component",
+    ):
+        nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(
+            frames[i], connectivity=4
+        )
         szs = stats[:, -1]
-        foreground_obj[i] = output == szs[1:].argmax()+1
+        foreground_obj[i] = output == szs[1:].argmax() + 1
 
     return foreground_obj
 
@@ -386,6 +430,7 @@ def get_bbox(roi):
         bbox = np.array([[y.min(), x.min()], [y.max(), x.max()]])
         return bbox
 
+
 def threshold_chunk(chunk, min_height, max_height):
     """
     Threshold out depth values that are less than min_height and larger than
@@ -406,20 +451,23 @@ def threshold_chunk(chunk, min_height, max_height):
 
     return chunk
 
-def get_roi(depth_image,
-            strel_dilate=cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15)),
-            dilate_iterations=0,
-            erode_iterations=0,
-            strel_erode=None,
-            noise_tolerance=30,
-            bg_roi_weights=(1, .1, 1),
-            overlap_roi=None,
-            bg_roi_gradient_filter=False,
-            bg_roi_gradient_kernel=7,
-            bg_roi_gradient_threshold=3000,
-            bg_roi_fill_holes=True,
-            get_all_data=False,
-            **kwargs):
+
+def get_roi(
+    depth_image,
+    strel_dilate=cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15)),
+    dilate_iterations=0,
+    erode_iterations=0,
+    strel_erode=None,
+    noise_tolerance=30,
+    bg_roi_weights=(1, 0.1, 1),
+    overlap_roi=None,
+    bg_roi_gradient_filter=False,
+    bg_roi_gradient_kernel=7,
+    bg_roi_gradient_threshold=3000,
+    bg_roi_fill_holes=True,
+    get_all_data=False,
+    **kwargs,
+):
     """
     Compute an ROI using RANSAC plane fitting and simple blob features.
 
@@ -449,16 +497,22 @@ def get_roi(depth_image,
     """
 
     if bg_roi_gradient_filter:
-        gradient_x = np.abs(cv2.Sobel(depth_image, cv2.CV_64F,
-                                      1, 0, ksize=bg_roi_gradient_kernel))
-        gradient_y = np.abs(cv2.Sobel(depth_image, cv2.CV_64F,
-                                      0, 1, ksize=bg_roi_gradient_kernel))
-        mask = np.logical_and(gradient_x < bg_roi_gradient_threshold, gradient_y < bg_roi_gradient_threshold)
+        gradient_x = np.abs(
+            cv2.Sobel(depth_image, cv2.CV_64F, 1, 0, ksize=bg_roi_gradient_kernel)
+        )
+        gradient_y = np.abs(
+            cv2.Sobel(depth_image, cv2.CV_64F, 0, 1, ksize=bg_roi_gradient_kernel)
+        )
+        mask = np.logical_and(
+            gradient_x < bg_roi_gradient_threshold,
+            gradient_y < bg_roi_gradient_threshold,
+        )
     else:
         mask = None
 
-    roi_plane, dists = moseq2_extract.extract.roi.plane_ransac(
-        depth_image, noise_tolerance=noise_tolerance, mask=mask, **kwargs)
+    roi_plane, dists = plane_ransac(
+        depth_image, noise_tolerance=noise_tolerance, mask=mask, **kwargs
+    )
     dist_ims = dists.reshape(depth_image.shape)
 
     if bg_roi_gradient_filter:
@@ -475,20 +529,26 @@ def get_roi(depth_image,
     dists = np.zeros_like(extents)
 
     # get the max distance from the center, area and extent
-    center = np.array(depth_image.shape)/2
+    center = np.array(depth_image.shape) / 2
 
     for i, props in enumerate(region_properties):
         areas[i] = props.area
         extents[i] = props.extent
-        tmp_dists = np.sqrt(np.sum(np.square(props.coords-center), 1))
+        tmp_dists = np.sqrt(np.sum(np.square(props.coords - center), 1))
         dists[i] = tmp_dists.max()
 
     # rank features
-    ranks = np.vstack((scipy.stats.rankdata(-areas, method='max'),
-                       scipy.stats.rankdata(-extents, method='max'),
-                       scipy.stats.rankdata(dists, method='max')))
-    weight_array = np.array(bg_roi_weights, 'float32')
-    shape_index = np.mean(np.multiply(ranks.astype('float32'), weight_array[:, np.newaxis]), 0).argsort()
+    ranks = np.vstack(
+        (
+            scipy.stats.rankdata(-areas, method="max"),
+            scipy.stats.rankdata(-extents, method="max"),
+            scipy.stats.rankdata(dists, method="max"),
+        )
+    )
+    weight_array = np.array(bg_roi_weights, "float32")
+    shape_index = np.mean(
+        np.multiply(ranks.astype("float32"), weight_array[:, np.newaxis]), 0
+    ).argsort()
 
     # expansion microscopy on the roi
     rois = []
@@ -497,14 +557,15 @@ def get_roi(depth_image,
     # Perform image processing on each found ROI
     for shape in shape_index:
         roi = np.zeros_like(depth_image)
-        roi[region_properties[shape].coords[:, 0],
-            region_properties[shape].coords[:, 1]] = 1
+        roi[
+            region_properties[shape].coords[:, 0], region_properties[shape].coords[:, 1]
+        ] = 1
         if strel_dilate is not None:
-            roi = cv2.dilate(roi, strel_dilate, iterations=dilate_iterations) # Dilate
+            roi = cv2.dilate(roi, strel_dilate, iterations=dilate_iterations)  # Dilate
         if strel_erode is not None:
-            roi = cv2.erode(roi, strel_erode, iterations=erode_iterations) # Erode
+            roi = cv2.erode(roi, strel_erode, iterations=erode_iterations)  # Erode
         if bg_roi_fill_holes:
-            roi = scipy.ndimage.morphology.binary_fill_holes(roi) # Fill Holes
+            roi = scipy.ndimage.morphology.binary_fill_holes(roi)  # Fill Holes
 
         rois.append(roi)
         bboxes.append(get_bbox(roi))
@@ -539,10 +600,10 @@ def apply_roi(frames, roi):
     """
 
     # yeah so fancy indexing slows us down by 3-5x
-    cropped_frames = frames*roi
+    cropped_frames = frames * roi
     bbox = get_bbox(roi)
 
-    cropped_frames = cropped_frames[:, bbox[0, 0]:bbox[1, 0], bbox[0, 1]:bbox[1, 1]]
+    cropped_frames = cropped_frames[:, bbox[0, 0] : bbox[1, 0], bbox[0, 1] : bbox[1, 1]]
     return cropped_frames
 
 
@@ -558,32 +619,45 @@ def im_moment_features(IM):
     """
 
     tmp = cv2.moments(IM)
-    num = 2*tmp['mu11']
-    den = tmp['mu20']-tmp['mu02']
+    num = 2 * tmp["mu11"]
+    den = tmp["mu20"] - tmp["mu02"]
 
-    common = np.sqrt(4*np.square(tmp['mu11'])+np.square(den))
+    common = np.sqrt(4 * np.square(tmp["mu11"]) + np.square(den))
 
-    if tmp['m00'] == 0:
+    if tmp["m00"] == 0:
         features = {
-            'orientation': np.nan,
-            'centroid': np.nan,
-            'axis_length': [np.nan, np.nan]}
+            "orientation": np.nan,
+            "centroid": np.nan,
+            "axis_length": [np.nan, np.nan],
+        }
     else:
         features = {
-            'orientation': -.5*np.arctan2(num, den),
-            'centroid': [tmp['m10']/tmp['m00'], tmp['m01']/tmp['m00']],
-            'axis_length': [2*np.sqrt(2)*np.sqrt((tmp['mu20']+tmp['mu02']+common)/tmp['m00']),
-                            2*np.sqrt(2)*np.sqrt((tmp['mu20']+tmp['mu02']-common)/tmp['m00'])]
+            "orientation": -0.5 * np.arctan2(num, den),
+            "centroid": [tmp["m10"] / tmp["m00"], tmp["m01"] / tmp["m00"]],
+            "axis_length": [
+                2
+                * np.sqrt(2)
+                * np.sqrt((tmp["mu20"] + tmp["mu02"] + common) / tmp["m00"]),
+                2
+                * np.sqrt(2)
+                * np.sqrt((tmp["mu20"] + tmp["mu02"] - common) / tmp["m00"]),
+            ],
         }
 
     return features
 
 
-def clean_frames(frames, prefilter_space=(3,), prefilter_time=None,
-                 strel_tail=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
-                 iters_tail=None, frame_dtype='uint8',
-                 strel_min=cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
-                 iters_min=None, progress_bar=False):
+def clean_frames(
+    frames,
+    prefilter_space=(3,),
+    prefilter_time=None,
+    strel_tail=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
+    iters_tail=None,
+    frame_dtype="uint8",
+    strel_min=cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+    iters_min=None,
+    progress_bar=False,
+):
     """
     Simple temporal and/or spatial filtering, median filter and morphological opening.
 
@@ -605,22 +679,30 @@ def clean_frames(frames, prefilter_space=(3,), prefilter_time=None,
     # seeing enormous speed gains w/ opencv
     filtered_frames = frames.copy().astype(frame_dtype)
 
-    for i in tqdm(range(frames.shape[0]), disable=not progress_bar, desc='Cleaning frames'):
+    for i in tqdm(
+        range(frames.shape[0]), disable=not progress_bar, desc="Cleaning frames"
+    ):
         # Erode Frames
         if iters_min is not None and iters_min > 0:
             filtered_frames[i] = cv2.erode(filtered_frames[i], strel_min, iters_min)
         # Median Blur
         if prefilter_space is not None and np.all(np.array(prefilter_space) > 0):
             for j in range(len(prefilter_space)):
-                filtered_frames[i] = cv2.medianBlur(filtered_frames[i], prefilter_space[j])
+                filtered_frames[i] = cv2.medianBlur(
+                    filtered_frames[i], prefilter_space[j]
+                )
         # Tail Filter
         if iters_tail is not None and iters_tail > 0:
-            filtered_frames[i] = cv2.morphologyEx(filtered_frames[i], cv2.MORPH_OPEN, strel_tail, iters_tail)
+            filtered_frames[i] = cv2.morphologyEx(
+                filtered_frames[i], cv2.MORPH_OPEN, strel_tail, iters_tail
+            )
 
     # Temporal Median Filter
     if prefilter_time is not None and np.all(np.array(prefilter_time) > 0):
         for j in range(len(prefilter_time)):
-            filtered_frames = scipy.signal.medfilt(filtered_frames, [prefilter_time[j], 1, 1])
+            filtered_frames = scipy.signal.medfilt(
+                filtered_frames, [prefilter_time[j], 1, 1]
+            )
 
     return filtered_frames
 
@@ -649,21 +731,23 @@ def get_frame_features(frames, frame_threshold=10, use_cc=False, progress_bar=Fa
         has_mask = True
     else:
         has_mask = False
-        mask = np.zeros((frames.shape), 'uint8')
+        mask = np.zeros((frames.shape), "uint8")
 
     # Pack contour features into dict
     features = {
-        'centroid': np.full((nframes, 2), np.nan),
-        'orientation': np.full((nframes,), np.nan),
-        'axis_length': np.full((nframes, 2), np.nan)
+        "centroid": np.full((nframes, 2), np.nan),
+        "orientation": np.full((nframes,), np.nan),
+        "axis_length": np.full((nframes, 2), np.nan),
     }
 
-    for i in tqdm(range(nframes), disable=not progress_bar, desc='Computing moments'):
+    for i in tqdm(range(nframes), disable=not progress_bar, desc="Computing moments"):
         # Threshold frame to compute mask
         frame_mask = frames[i] > frame_threshold
 
         # Get contours in frame
-        cnts, hierarchy = cv2.findContours(frame_mask.astype('uint8'), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        cnts, hierarchy = cv2.findContours(
+            frame_mask.astype("uint8"), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+        )
         tmp = np.array([cv2.contourArea(x) for x in cnts])
 
         if tmp.size == 0:
@@ -701,38 +785,88 @@ def crop_and_rotate_frames(frames, features, crop_size=(80, 80), progress_bar=Fa
     win = (crop_size[0] // 2, crop_size[1] // 2 + 1)
     border = (crop_size[1], crop_size[1], crop_size[0], crop_size[0])
 
-    for i in tqdm(range(frames.shape[0]), disable=not progress_bar, desc='Rotating'):
+    for i in tqdm(range(frames.shape[0]), disable=not progress_bar, desc="Rotating"):
 
-        if np.any(np.isnan(features['centroid'][i])):
+        if np.any(np.isnan(features["centroid"][i])):
             continue
 
         # Get bounded frames
         use_frame = cv2.copyMakeBorder(frames[i], *border, cv2.BORDER_CONSTANT, 0)
 
         # Get row and column centroids
-        rr = np.arange(features['centroid'][i, 1]-win[0],
-                       features['centroid'][i, 1]+win[1]).astype('int16')
-        cc = np.arange(features['centroid'][i, 0]-win[0],
-                       features['centroid'][i, 0]+win[1]).astype('int16')
+        rr = np.arange(
+            features["centroid"][i, 1] - win[0], features["centroid"][i, 1] + win[1]
+        ).astype("int16")
+        cc = np.arange(
+            features["centroid"][i, 0] - win[0], features["centroid"][i, 0] + win[1]
+        ).astype("int16")
 
-        rr = rr+crop_size[0]
-        cc = cc+crop_size[1]
+        rr = rr + crop_size[0]
+        cc = cc + crop_size[1]
 
         # Ensure centroids are in bounded frame
-        if (np.any(rr >= use_frame.shape[0]) or np.any(rr < 1)
-                or np.any(cc >= use_frame.shape[1]) or np.any(cc < 1)):
+        if (
+            np.any(rr >= use_frame.shape[0])
+            or np.any(rr < 1)
+            or np.any(cc >= use_frame.shape[1])
+            or np.any(cc < 1)
+        ):
             continue
 
         # Rotate the frame such that the mouse is oriented facing east
-        rot_mat = cv2.getRotationMatrix2D((crop_size[0] // 2, crop_size[1] // 2),
-                                          -np.rad2deg(features['orientation'][i]), 1)
-        cropped_frames[i] = cv2.warpAffine(use_frame[rr[0]:rr[-1], cc[0]:cc[-1]],
-                                           rot_mat, (crop_size[0], crop_size[1]))
+        rot_mat = cv2.getRotationMatrix2D(
+            (crop_size[0] // 2, crop_size[1] // 2),
+            -np.rad2deg(features["orientation"][i]),
+            1,
+        )
+        cropped_frames[i] = cv2.warpAffine(
+            use_frame[rr[0] : rr[-1], cc[0] : cc[-1]],
+            rot_mat,
+            (crop_size[0], crop_size[1]),
+        )
 
     return cropped_frames
 
 
-def compute_scalars(frames, track_features, min_height=10, max_height=100, true_depth=673.1):
+def convert_pxs_to_mm(
+    coords, resolution=(512, 424), field_of_view=(70.6, 60), true_depth=673.1
+):
+    """
+    Converts x, y coordinates in pixel space to mm.
+
+    Args:
+    coords (list): list of x,y pixel coordinates
+    resolution (tuple): image dimensions
+    field_of_view (tuple): width and height scaling params
+    true_depth (float): detected true depth
+
+    Returns:
+    new_coords (list): x,y coordinates in mm
+    """
+
+    # http://stackoverflow.com/questions/17832238/kinect-intrinsic-parameters-from-field-of-view/18199938#18199938
+    # http://www.imaginativeuniversal.com/blog/post/2014/03/05/quick-reference-kinect-1-vs-kinect-2.aspx
+    # http://smeenk.com/kinect-field-of-view-comparison/
+
+    cx = resolution[0] // 2
+    cy = resolution[1] // 2
+
+    xhat = coords[:, 0] - cx
+    yhat = coords[:, 1] - cy
+
+    fw = resolution[0] / (2 * np.deg2rad(field_of_view[0] / 2))
+    fh = resolution[1] / (2 * np.deg2rad(field_of_view[1] / 2))
+
+    new_coords = np.zeros_like(coords)
+    new_coords[:, 0] = true_depth * xhat / fw
+    new_coords[:, 1] = true_depth * yhat / fh
+
+    return new_coords
+
+
+def compute_scalars(
+    frames, track_features, min_height=10, max_height=100, true_depth=673.1
+):
     """
     Compute extracted scalars.
 
@@ -751,117 +885,87 @@ def compute_scalars(frames, track_features, min_height=10, max_height=100, true_
 
     # Pack features into dict
     features = {
-        'centroid_x_px': np.zeros((nframes,), 'float32'),
-        'centroid_y_px': np.zeros((nframes,), 'float32'),
-        'velocity_2d_px': np.zeros((nframes,), 'float32'),
-        'velocity_3d_px': np.zeros((nframes,), 'float32'),
-        'width_px': np.zeros((nframes,), 'float32'),
-        'length_px': np.zeros((nframes,), 'float32'),
-        'area_px': np.zeros((nframes,)),
-        'centroid_x_mm': np.zeros((nframes,), 'float32'),
-        'centroid_y_mm': np.zeros((nframes,), 'float32'),
-        'velocity_2d_mm': np.zeros((nframes,), 'float32'),
-        'velocity_3d_mm': np.zeros((nframes,), 'float32'),
-        'width_mm': np.zeros((nframes,), 'float32'),
-        'length_mm': np.zeros((nframes,), 'float32'),
-        'area_mm': np.zeros((nframes,)),
-        'height_ave_mm': np.zeros((nframes,), 'float32'),
-        'angle': np.zeros((nframes,), 'float32'),
-        'velocity_theta': np.zeros((nframes,)),
+        "centroid_x_px": np.zeros((nframes,), "float32"),
+        "centroid_y_px": np.zeros((nframes,), "float32"),
+        "velocity_2d_px": np.zeros((nframes,), "float32"),
+        "velocity_3d_px": np.zeros((nframes,), "float32"),
+        "width_px": np.zeros((nframes,), "float32"),
+        "length_px": np.zeros((nframes,), "float32"),
+        "area_px": np.zeros((nframes,)),
+        "centroid_x_mm": np.zeros((nframes,), "float32"),
+        "centroid_y_mm": np.zeros((nframes,), "float32"),
+        "velocity_2d_mm": np.zeros((nframes,), "float32"),
+        "velocity_3d_mm": np.zeros((nframes,), "float32"),
+        "width_mm": np.zeros((nframes,), "float32"),
+        "length_mm": np.zeros((nframes,), "float32"),
+        "area_mm": np.zeros((nframes,)),
+        "height_ave_mm": np.zeros((nframes,), "float32"),
+        "angle": np.zeros((nframes,), "float32"),
+        "velocity_theta": np.zeros((nframes,)),
     }
 
     # Get mm centroid
-    centroid_mm = convert_pxs_to_mm(track_features['centroid'], true_depth=true_depth)
-    centroid_mm_shift = convert_pxs_to_mm(track_features['centroid'] + 1, true_depth=true_depth)
+    centroid_mm = convert_pxs_to_mm(track_features["centroid"], true_depth=true_depth)
+    centroid_mm_shift = convert_pxs_to_mm(
+        track_features["centroid"] + 1, true_depth=true_depth
+    )
 
     # Based on the centroid of the mouse, get the mm_to_px conversion
     px_to_mm = np.abs(centroid_mm_shift - centroid_mm)
     masked_frames = np.logical_and(frames > min_height, frames < max_height)
 
-    features['centroid_x_px'] = track_features['centroid'][:, 0]
-    features['centroid_y_px'] = track_features['centroid'][:, 1]
+    features["centroid_x_px"] = track_features["centroid"][:, 0]
+    features["centroid_y_px"] = track_features["centroid"][:, 1]
 
-    features['centroid_x_mm'] = centroid_mm[:, 0]
-    features['centroid_y_mm'] = centroid_mm[:, 1]
+    features["centroid_x_mm"] = centroid_mm[:, 0]
+    features["centroid_y_mm"] = centroid_mm[:, 1]
 
     # based on the centroid of the mouse, get the mm_to_px conversion
 
-    features['width_px'] = np.min(track_features['axis_length'], axis=1)
-    features['length_px'] = np.max(track_features['axis_length'], axis=1)
-    features['area_px'] = np.sum(masked_frames, axis=(1, 2))
+    features["width_px"] = np.min(track_features["axis_length"], axis=1)
+    features["length_px"] = np.max(track_features["axis_length"], axis=1)
+    features["area_px"] = np.sum(masked_frames, axis=(1, 2))
 
-    features['width_mm'] = features['width_px'] * px_to_mm[:, 1]
-    features['length_mm'] = features['length_px'] * px_to_mm[:, 0]
-    features['area_mm'] = features['area_px'] * px_to_mm.mean(axis=1)
+    features["width_mm"] = features["width_px"] * px_to_mm[:, 1]
+    features["length_mm"] = features["length_px"] * px_to_mm[:, 0]
+    features["area_mm"] = features["area_px"] * px_to_mm.mean(axis=1)
 
-    features['angle'] = track_features['orientation']
+    features["angle"] = track_features["orientation"]
 
     nmask = np.sum(masked_frames, axis=(1, 2))
 
     for i in range(nframes):
         if nmask[i] > 0:
-            features['height_ave_mm'][i] = np.mean(
-                frames[i, masked_frames[i]])
+            features["height_ave_mm"][i] = np.mean(frames[i, masked_frames[i]])
 
-    vel_x = np.diff(np.concatenate((features['centroid_x_px'][:1], features['centroid_x_px'])))
-    vel_y = np.diff(np.concatenate((features['centroid_y_px'][:1], features['centroid_y_px'])))
-    vel_z = np.diff(np.concatenate((features['height_ave_mm'][:1], features['height_ave_mm'])))
+    vel_x = np.diff(
+        np.concatenate((features["centroid_x_px"][:1], features["centroid_x_px"]))
+    )
+    vel_y = np.diff(
+        np.concatenate((features["centroid_y_px"][:1], features["centroid_y_px"]))
+    )
+    vel_z = np.diff(
+        np.concatenate((features["height_ave_mm"][:1], features["height_ave_mm"]))
+    )
 
-    features['velocity_2d_px'] = np.hypot(vel_x, vel_y)
-    features['velocity_3d_px'] = np.sqrt(
-        np.square(vel_x)+np.square(vel_y)+np.square(vel_z))
+    features["velocity_2d_px"] = np.hypot(vel_x, vel_y)
+    features["velocity_3d_px"] = np.sqrt(
+        np.square(vel_x) + np.square(vel_y) + np.square(vel_z)
+    )
 
-    vel_x = np.diff(np.concatenate((features['centroid_x_mm'][:1], features['centroid_x_mm'])))
-    vel_y = np.diff(np.concatenate((features['centroid_y_mm'][:1], features['centroid_y_mm'])))
+    vel_x = np.diff(
+        np.concatenate((features["centroid_x_mm"][:1], features["centroid_x_mm"]))
+    )
+    vel_y = np.diff(
+        np.concatenate((features["centroid_y_mm"][:1], features["centroid_y_mm"]))
+    )
 
-    features['velocity_2d_mm'] = np.hypot(vel_x, vel_y)
-    features['velocity_3d_mm'] = np.sqrt(
-        np.square(vel_x)+np.square(vel_y)+np.square(vel_z))
+    features["velocity_2d_mm"] = np.hypot(vel_x, vel_y)
+    features["velocity_3d_mm"] = np.sqrt(
+        np.square(vel_x) + np.square(vel_y) + np.square(vel_z)
+    )
 
-    features['velocity_theta'] = np.arctan2(vel_y, vel_x)
-
-    return features
-
-
-def feature_hampel_filter(features, centroid_hampel_span=None, centroid_hampel_sig=3,
-                          angle_hampel_span=None, angle_hampel_sig=3):
-    """
-    Filter computed extraction features using Hampel Filtering.
-
-    Args:
-    features (dict): dictionary of video features
-    centroid_hampel_span (int): Centroid Hampel Span Filtering Kernel Size
-    centroid_hampel_sig (int): Centroid Hampel Signal Filtering Kernel Size
-    angle_hampel_span (int): Angle Hampel Span Filtering Kernel Size
-    angle_hampel_sig (int): Angle Hampel Span Filtering Kernel Size
-
-    Returns:
-    features (dict): filtered version of input dict.
-    """
-    if centroid_hampel_span is not None and centroid_hampel_span > 0:
-        padded_centroids = np.pad(features['centroid'],
-                                  (((centroid_hampel_span // 2, centroid_hampel_span // 2)),
-                                   (0, 0)),
-                                  'constant', constant_values = np.nan)
-        for i in range(1):
-            vws = strided_app(padded_centroids[:, i], centroid_hampel_span, 1)
-            med = np.nanmedian(vws, axis=1)
-            mad = np.nanmedian(np.abs(vws - med[:, None]), axis=1)
-            vals = np.abs(features['centroid'][:, i] - med)
-            fill_idx = np.where(vals > med + centroid_hampel_sig * mad)[0]
-            features['centroid'][fill_idx, i] = med[fill_idx]
-
-        padded_orientation = np.pad(features['orientation'],
-                                    (angle_hampel_span // 2, angle_hampel_span // 2),
-                                    'constant', constant_values = np.nan)
-
-    if angle_hampel_span is not None and angle_hampel_span > 0:
-        vws = strided_app(padded_orientation, angle_hampel_span, 1)
-        med = np.nanmedian(vws, axis=1)
-        mad = np.nanmedian(np.abs(vws - med[:, None]), axis=1)
-        vals = np.abs(features['orientation'] - med)
-        fill_idx = np.where(vals > med + angle_hampel_sig * mad)[0]
-        features['orientation'][fill_idx] = med[fill_idx]
+    features["velocity_theta"] = np.arctan2(vel_y, vel_x)
 
     return features
 
@@ -882,7 +986,7 @@ def model_smoother(features, ll=None, clips=(-300, -125)):
     if ll is None or clips is None or (clips[0] >= clips[1]):
         return features
 
-    ave_ll = np.zeros((ll.shape[0], ))
+    ave_ll = np.zeros((ll.shape[0],))
     for i, ll_frame in enumerate(ll):
 
         max_mu = clips[1]
@@ -890,7 +994,7 @@ def model_smoother(features, ll=None, clips=(-300, -125)):
 
         smoother = np.mean(ll[i])
         smoother -= min_mu
-        smoother /= (max_mu - min_mu)
+        smoother /= max_mu - min_mu
 
         smoother = np.clip(smoother, 0, 1)
         ave_ll[i] = smoother
@@ -902,13 +1006,18 @@ def model_smoother(features, ll=None, clips=(-300, -125)):
         if nans.any():
             if ndims == 2:
                 for i in range(v.shape[1]):
-                    f = scipy.interpolate.interp1d(xvec[~nans[:, i]], v[~nans[:, i], i],
-                                                   kind='nearest', fill_value='extrapolate')
+                    f = scipy.interpolate.interp1d(
+                        xvec[~nans[:, i]],
+                        v[~nans[:, i], i],
+                        kind="nearest",
+                        fill_value="extrapolate",
+                    )
                     fill_vals = f(xvec[nans[:, i]])
                     features[k][xvec[nans[:, i]], i] = fill_vals
             else:
-                f = scipy.interpolate.interp1d(xvec[~nans], v[~nans],
-                                               kind='nearest', fill_value='extrapolate')
+                f = scipy.interpolate.interp1d(
+                    xvec[~nans], v[~nans], kind="nearest", fill_value="extrapolate"
+                )
                 fill_vals = f(xvec[nans])
                 features[k][nans] = fill_vals
 
