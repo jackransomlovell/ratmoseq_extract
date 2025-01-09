@@ -10,6 +10,7 @@ import json
 import warnings
 import os
 import tifffile
+import urllib
 from typing import Pattern
 import re
 from cytoolz import keymap
@@ -1698,9 +1699,7 @@ def copy_manifest_results(manifest, output_dir):
             yaml.safe_dump(v["yaml_dict"], f)
 
 
-def aggregate_extract_results_wrapper(
-    input_dir, format, output_dir, mouse_threshold=0.0
-):
+def aggregate_extract_results(input_dir, format, output_dir):
     """
     Aggregate results to one folder and generate index file (moseq2-index.yaml).
 
@@ -1740,3 +1739,358 @@ def aggregate_extract_results_wrapper(
 
     print(f"Index file path: {indexpath}")
     return indexpath
+
+
+def generate_index_from_agg_res(input_dir):
+    """
+    Generate index file from aggregated results folder.
+
+    Args:
+    input_dir (str): path to aggregated results folder
+    """
+
+    # find the yaml files
+    yaml_paths = glob(os.path.join(input_dir, "*.yaml"))
+    # setup pca path
+    pca_path = os.path.join(os.path.dirname(input_dir), "_pca", "pca_scores.h5")
+    if os.path.exists(pca_path):
+        # point pca_path to pca scores you have
+        index_data = {
+            "files": [],
+            "pca_path": pca_path,
+        }
+    else:
+        index_data = {
+            "files": [],
+            "pca_path": "",
+        }
+
+    for p in yaml_paths:
+        temp_yaml = read_yaml(p)
+        file_dict = {
+            "group": "default",
+            "metadata": temp_yaml["metadata"],
+            "path": [p[:-4] + "h5", p],
+            "uuid": temp_yaml["uuid"],
+        }
+        index_data["files"].append(file_dict)
+
+    # find output filename
+    output_file = os.path.join(os.path.dirname(input_dir), "moseq2-index.yaml")
+
+    # write out index yaml
+    with open(output_file, "w") as f:
+        yaml.safe_dump(index_data, f)
+
+
+def write_frames(
+    filename,
+    frames,
+    threads=6,
+    fps=30,
+    pixel_format="gray16le",
+    codec="ffv1",
+    close_pipe=True,
+    pipe=None,
+    frame_dtype="uint16",
+    slices=24,
+    slicecrc=1,
+    frame_size=None,
+    get_cmd=False,
+):
+    """
+    Write frames to avi file using the ffv1 lossless encoder
+
+    Args:
+    filename (str): path to file to write to.
+    frames (np.ndarray): frames to write
+    threads (int): number of threads to write video
+    fps (int): frames per second
+    pixel_format (str): format video color scheme
+    codec (str): ffmpeg encoding-writer method to use
+    close_pipe (bool): indicates to close the open pipe to video when done writing.
+    pipe (subProcess.Pipe): pipe to currently open video file.
+    frame_dtype (str): indicates the data type to use when writing the videos
+    slices (int): number of frame slices to write at a time.
+    slicecrc (int): check integrity of slices
+    frame_size (tuple): shape/dimensions of image.
+    get_cmd (bool): indicates whether function should return ffmpeg command (instead of executing)
+
+    Returns:
+    pipe (subProcess.Pipe): indicates whether video writing is complete.
+    """
+
+    # we probably want to include a warning about multiples of 32 for videos
+    # (then we can use pyav and some speedier tools)
+    if not frame_size and type(frames) is np.ndarray:
+        frame_size = "{0:d}x{1:d}".format(frames.shape[2], frames.shape[1])
+    elif not frame_size and type(frames) is tuple:
+        frame_size = "{0:d}x{1:d}".format(frames[0], frames[1])
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "fatal",
+        "-framerate",
+        str(fps),
+        "-f",
+        "rawvideo",
+        "-s",
+        frame_size,
+        "-pix_fmt",
+        pixel_format,
+        "-i",
+        "-",
+        "-an",
+        "-vcodec",
+        codec,
+        "-threads",
+        str(threads),
+        "-slices",
+        str(slices),
+        "-slicecrc",
+        str(slicecrc),
+        "-r",
+        str(fps),
+        filename,
+    ]
+
+    if get_cmd:
+        return command
+
+    if not pipe:
+        pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    for i in tqdm(
+        range(frames.shape[0]), disable=True, desc=f"Writing frames to {filename}"
+    ):
+        pipe.stdin.write(frames[i].astype(frame_dtype).tostring())
+
+    if close_pipe:
+        pipe.communicate()
+        return None
+    else:
+        return pipe
+
+
+def convert_raw_to_avi(
+    input_file, output_file, chunk_size, fps, delete, threads, mapping
+):
+    """
+    compress a raw depth file into an avi file (with depth values) that is 8x smaller.
+
+    Args:
+    input_file (str): Path to depth file to convert
+    output_file (str): Path to output avi file
+    chunk_size (int): Size of frame chunks to iteratively process
+    fps (int): frame rate.
+    delete (bool): Delete the original depth file if True.
+    threads (int): Number of threads used to encode video.
+    mapping (str or int): Indicate which video stream to from the inputted file
+
+    Returns:
+    """
+
+    if output_file is None:
+        base_filename = splitext(basename(input_file))[0]
+        output_file = join(dirname(input_file), f"{base_filename}.avi")
+
+    vid_info = get_movie_info(input_file, mapping=mapping)
+    frame_batches = gen_batch_sequence(vid_info["nframes"], chunk_size, 0)
+    video_pipe = None
+
+    for batch in tqdm(frame_batches, desc="Encoding batches"):
+        frames = load_movie_data(input_file, batch, mapping=mapping)
+        video_pipe = write_frames(
+            output_file,
+            frames,
+            pipe=video_pipe,
+            close_pipe=False,
+            threads=threads,
+            fps=fps,
+        )
+
+    if video_pipe:
+        video_pipe.communicate()
+
+    for batch in tqdm(frame_batches, desc="Checking data integrity"):
+        raw_frames = load_movie_data(input_file, batch, mapping=mapping)
+        encoded_frames = load_movie_data(output_file, batch, mapping=mapping)
+
+        if not np.array_equal(raw_frames, encoded_frames):
+            raise RuntimeError(
+                f"Raw frames and encoded frames not equal from {batch[0]} to {batch[-1]}"
+            )
+
+    print("Encoding successful")
+
+    if delete:
+        print("Deleting", input_file)
+        os.remove(input_file)
+
+
+@filter_warnings
+def download_flip(config_file, output_dir, selected_flip=None):
+    """
+    Download and save flip classifiers.
+
+    Args:
+    config_file (str): path to config file
+    output_dir (str): path to directory to save classifier in.
+    selected_flip (int or str): int: index of desired flip classifier; str: path to flip file
+
+    Returns:
+    None
+    """
+
+    flip_files = {
+        "large mice with fibers (K2)": "https://storage.googleapis.com/flip-classifiers/flip_classifier_k2_largemicewithfiber.pkl",
+        "adult male c57s (K2)": "https://storage.googleapis.com/flip-classifiers/flip_classifier_k2_c57_10to13weeks.pkl",
+        "mice with Inscopix cables (K2)": "https://storage.googleapis.com/flip-classifiers/flip_classifier_k2_inscopix.pkl",
+        "adult male c57s (Azure)": "https://moseq-data.s3.amazonaws.com/flip-classifier-azure-temp.pkl",
+    }
+
+    key_list = list(flip_files)
+
+    if selected_flip is None:
+        for idx, (k, v) in enumerate(flip_files.items()):
+            print(f"[{idx}] {k} ---> {v}")
+    else:
+        selected_flip = key_list[selected_flip]
+
+    # prompt for user selection if not already inputted
+    while selected_flip is None:
+        try:
+            selected_flip = key_list[int(input("Enter a selection "))]
+        except ValueError:
+            print("Please enter a valid number listed above")
+            continue
+
+    if not exists(output_dir):
+        os.makedirs(output_dir)
+
+    selection = flip_files[selected_flip]
+
+    output_filename = join(output_dir, basename(selection))
+
+    urllib.request.urlretrieve(selection, output_filename)
+    print("Successfully downloaded flip file to", output_filename)
+
+    # Update the config file with the latest path to the flip classifier
+    try:
+        config_data = read_yaml(config_file)
+        config_data["flip_classifier"] = output_filename
+
+        with open(config_file, "w") as f:
+            yaml.safe_dump(config_data, f)
+    except Exception as e:
+        print("Could not update configuration file flip classifier path")
+        print("Unexpected error:", e)
+
+
+def read_frames_raw(
+    filename,
+    frames=None,
+    frame_size=(512, 424),
+    bit_depth=16,
+    movie_dtype="<u2",
+    **kwargs,
+):
+    """
+    Reads in data from raw binary file.
+
+    Args:
+    filename (string): name of raw data file
+    frames (list or range): frames to extract
+    frame_dims (tuple): wxh of frames in pixels
+    bit_depth (int): bits per pixel (default: 16)
+    movie_dtype (str): An indicator for numpy to store the piped ffmpeg-read video in memory for processing.
+
+    Returns:
+    chunk (numpy ndarray): nframes x h x w
+    """
+
+    vid_info = get_raw_info(filename, frame_size=frame_size, bit_depth=bit_depth)
+
+    if vid_info["dims"] != frame_size:
+        frame_size = vid_info["dims"]
+
+    if type(frames) is int:
+        frames = [frames]
+    elif not frames or (type(frames) is range) and len(frames) == 0:
+        frames = range(0, vid_info["nframes"])
+
+    seek_point = np.maximum(0, frames[0] * vid_info["bytes_per_frame"])
+    read_points = len(frames) * frame_size[0] * frame_size[1]
+
+    dims = (len(frames), frame_size[1], frame_size[0])
+
+    if type(filename) is tarfile.TarFile:
+        tar_members = filename.getmembers()
+        tar_names = [_.name for _ in tar_members]
+        input_file = tar_members[tar_names.index("depth.dat")]
+        with filename.extractfile(input_file) as f:
+            f.seek(int(seek_point))
+            chunk = f.read(int(len(frames) * vid_info["bytes_per_frame"]))
+            chunk = np.frombuffer(chunk, dtype=np.dtype(movie_dtype)).reshape(dims)
+    else:
+        with open(filename, "rb") as f:
+            f.seek(int(seek_point))
+            chunk = np.fromfile(
+                file=f, dtype=np.dtype(movie_dtype), count=read_points
+            ).reshape(dims)
+
+    return chunk
+
+
+def load_movie_data(
+    filename, frames=None, frame_size=(512, 424), bit_depth=16, **kwargs
+):
+    """
+    Parse file extension and load the movie data into numpy array.
+
+    Args:
+    filename (str): Path to video.
+    frames (int or list): Frame indices to read in to output array.
+    frame_size (tuple): Video dimensions (nrows, ncols)
+    bit_depth (int): Number of bits per pixel, corresponds to image resolution.
+    kwargs (dict): Any additional parameters that could be required in read_frames_raw().
+
+    Returns:
+    frame_data (numpy.ndarray): Read video as numpy array. (nframes, nrows, ncols)
+    """
+
+    if type(frames) is int:
+        frames = [frames]
+    try:
+        if type(filename) is tarfile.TarFile:
+            frame_data = read_frames_raw(
+                filename,
+                frames=frames,
+                frame_size=frame_size,
+                bit_depth=bit_depth,
+                **kwargs,
+            )
+        elif filename.lower().endswith(".dat"):
+            frame_data = read_frames_raw(
+                filename,
+                frames=frames,
+                frame_size=frame_size,
+                bit_depth=bit_depth,
+                **kwargs,
+            )
+        elif filename.lower().endswith(".avi"):
+            frame_data = read_frames(filename, frames, frame_size=frame_size, **kwargs)
+
+    except AttributeError as e:
+        print("Error reading movie:", e)
+        frame_data = read_frames_raw(
+            filename,
+            frames=frames,
+            frame_size=frame_size,
+            bit_depth=bit_depth,
+            **kwargs,
+        )
+
+    return frame_data
