@@ -5,6 +5,162 @@ from tqdm import tqdm
 import datetime
 import matplotlib.pyplot as plt
 import ruamel.yaml as yaml
+import tarfile
+import json
+import warnings
+import os
+import tifffile
+import click
+import h5py
+from pkg_resources import get_distribution
+from os.path import exists, join, dirname, basename, splitext
+
+
+def generate_missing_metadata(sess_dir, sess_name):
+    """
+    Generate metadata.json with default avlues for session that does not already include one.
+
+    Args:
+    sess_dir (str): Path to session directory to create metadata.json file in.
+    sess_name (str): Session Name to set the metadata SessionName.
+
+    Returns:
+    """
+
+    # generate sample metadata json for each session that is missing one
+    sample_meta = {
+        "SubjectName": "",
+        f"SessionName": f"{sess_name}",
+        "NidaqChannels": 0,
+        "NidaqSamplingRate": 0.0,
+        "DepthResolution": [512, 424],
+        "ColorDataType": "Byte[]",
+        "StartTime": "",
+    }
+
+    with open(join(sess_dir, "metadata.json"), "w") as fp:
+        json.dump(sample_meta, fp)
+
+
+def load_timestamps_from_movie(input_file, threads=8, mapping="DEPTH"):
+    """
+    Run a ffprobe command to extract the timestamps from the .mkv file, and pipes the
+    output data to a csv file.
+
+    Args:
+    filename (str): path to input file to extract timestamps from.
+    threads (int): number of threads to simultaneously read timestamps
+    mapping (str): chooses the stream to read from mkv files. (Will default to if video is not an mkv format)
+
+    Returns:
+    timestamps (list): list of float values representing timestamps for each frame.
+    """
+
+    print("Loading movie timestamps")
+
+    if isinstance(mapping, str):
+        mapping_dict = get_stream_names(input_file)
+        mapping = mapping_dict.get(mapping, 0)
+
+    command = [
+        "ffprobe",
+        "-select_streams",
+        f"v:{mapping}",
+        "-threads",
+        str(threads),
+        "-show_entries",
+        "frame=pkt_pts_time",
+        "-v",
+        "quiet",
+        input_file,
+        "-of",
+        "csv=p=0",
+    ]
+
+    ffprobe = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    out, err = ffprobe.communicate()
+
+    if err:
+        print("Error:", err)
+        return None
+
+    timestamps = [float(t) for t in out.split()]
+
+    if len(timestamps) == 0:
+        return None
+
+    return timestamps
+
+
+def load_metadata(metadata_file):
+    """
+    Load metadata from session metadata.json file.
+
+    Args:
+    metadata_file (str): path to metadata file
+
+    Returns:
+    metadata (dict): metadata dictionary of JSON contents
+    """
+
+    try:
+        if not exists(metadata_file):
+            generate_missing_metadata(
+                dirname(metadata_file), basename(dirname(metadata_file))
+            )
+
+        with open(metadata_file, "r") as f:
+            metadata = json.load(f)
+    except TypeError:
+        # try loading directly
+        metadata = json.load(metadata_file)
+
+    return metadata
+
+
+def load_timestamps(timestamp_file, col=0, alternate=False):
+    """
+    Read timestamps from space delimited text file for timestamps.
+
+    Args:
+    timestamp_file (str): path to timestamp file
+    col (int): column in ts file read.
+    alternate (boolean): specified if timestamps were saved in a csv file. False means txt file and True means csv file.
+
+    Returns:
+    ts (1D array): list of timestamps
+    """
+
+    ts = []
+    try:
+        with open(timestamp_file, "r") as f:
+            for line in f:
+                cols = line.split()
+                ts.append(float(cols[col]))
+        ts = np.array(ts)
+    except TypeError as e:
+        # try iterating directly
+        for line in timestamp_file:
+            cols = line.split()
+            ts.append(float(cols[col]))
+        ts = np.array(ts)
+    except FileNotFoundError as e:
+        ts = None
+        warnings.warn(
+            "Timestamp file was not found! Make sure the timestamp file exists is named "
+            '"depth_ts.txt" or "timestamps.csv".'
+        )
+        warnings.warn(
+            "This could cause issues for large number of dropped frames during the PCA step while "
+            "imputing missing data."
+        )
+
+    # if timestamps were saved in a csv file
+    if alternate:
+        ts = ts * 1000
+
+    return ts
+
 
 def read_yaml(yaml_file):
     """
@@ -17,8 +173,79 @@ def read_yaml(yaml_file):
     return_dict (dict): dict of yaml contents
     """
 
-    with open(yaml_file, 'r') as f:
+    with open(yaml_file, "r") as f:
         return yaml.safe_load(f)
+
+
+def dict_to_h5(h5, dic, root="/", annotations=None):
+    """
+    Save an dict to an h5 file, mounting at root.
+    Keys are mapped to group names recursively.
+
+    Args:
+    h5 (h5py.File instance): h5py.file object to operate on
+    dic (dict): dictionary of data to write
+    root (string): group on which to add additional groups and datasets
+    annotations (dict): annotation data to add to corresponding h5 datasets. Should contain same keys as dic.
+
+    """
+
+    if not root.endswith("/"):
+        root = root + "/"
+
+    if annotations is None:
+        annotations = (
+            {}
+        )  # empty dict is better than None, but dicts shouldn't be default parameters
+
+    for key, item in dic.items():
+        dest = root + key
+        try:
+            if isinstance(item, (np.ndarray, np.int64, np.float64, str, bytes)):
+                h5[dest] = item
+            elif isinstance(item, (tuple, list)):
+                h5[dest] = np.asarray(item)
+            elif isinstance(item, (int, float)):
+                h5[dest] = np.asarray([item])[0]
+            elif item is None:
+                h5.create_dataset(
+                    dest, data=h5py.Empty(dtype=h5py.special_dtype(vlen=str))
+                )
+            elif isinstance(item, dict):
+                dict_to_h5(h5, item, dest)
+            else:
+                raise ValueError(
+                    "Cannot save {} type to key {}".format(type(item), dest)
+                )
+        except Exception as e:
+            print(e)
+            if key != "inputs":
+                print("h5py could not encode key:", key)
+
+        if key in annotations:
+            if annotations[key] is None:
+                h5[dest].attrs["description"] = ""
+            else:
+                h5[dest].attrs["description"] = annotations[key]
+
+
+def click_param_annot(click_cmd):
+    """
+    Return a dict that maps option names to help strings from a click.Command instance.
+
+    Args:
+    click_cmd (click.Command): command to annotate
+
+    Returns:
+    annotations (dict): dictionary of options and their help messages
+    """
+
+    annotations = {}
+    for p in click_cmd.params:
+        if isinstance(p, click.Option):
+            annotations[p.human_readable_name] = p.help
+    return annotations
+
 
 def create_extract_h5(
     h5_file,
@@ -165,7 +392,7 @@ def create_extract_h5(
     ] = "Version of moseq2-extract"
 
     # Extraction Parameters
-    from moseq2_extract.cli import extract
+    from ratmoseq_extract.cli import extract
 
     dict_to_h5(
         h5_file,
@@ -183,7 +410,6 @@ def create_extract_h5(
             h5_file.create_dataset(f"metadata/acquisition/{key}", data=value)
         else:
             h5_file.create_dataset(f"metadata/acquisition/{key}", dtype="f")
-
 
 
 def write_extracted_chunk_to_h5(
@@ -254,6 +480,7 @@ def make_output_movie(results, config_data, offset=0):
 
     return output_movie
 
+
 def handle_extract_metadata(input_file, dirname):
     """
     Extract metadata and timestamp in the extraction.
@@ -319,6 +546,42 @@ def handle_extract_metadata(input_file, dirname):
 
     return acquisition_metadata, timestamps, tar
 
+
+def get_raw_info(filename, bit_depth=16, frame_size=(512, 424)):
+    """
+    Get info from a raw data file with specified frame dimensions and bit depth.
+
+    Args:
+    filename (str): name of raw data file
+    bit_depth (int): bits per pixel (default: 16)
+    frame_dims (tuple): wxh or hxw of each frame
+
+    Returns:
+    file_info (dict): dictionary containing depth file metadata
+    """
+
+    bytes_per_frame = (frame_size[0] * frame_size[1] * bit_depth) / 8
+
+    if type(filename) is not tarfile.TarFile:
+        file_info = {
+            "bytes": os.stat(filename).st_size,
+            "nframes": int(os.stat(filename).st_size / bytes_per_frame),
+            "dims": frame_size,
+            "bytes_per_frame": bytes_per_frame,
+        }
+    else:
+        tar_members = filename.getmembers()
+        tar_names = [_.name for _ in tar_members]
+        input_file = tar_members[tar_names.index("depth.dat")]
+        file_info = {
+            "bytes": input_file.size,
+            "nframes": int(input_file.size / bytes_per_frame),
+            "dims": frame_size,
+            "bytes_per_frame": bytes_per_frame,
+        }
+    return file_info
+
+
 def get_movie_info(
     filename, frame_size=(512, 424), bit_depth=16, mapping="DEPTH", threads=8, **kwargs
 ):
@@ -355,6 +618,7 @@ def get_movie_info(
 
     return metadata
 
+
 def get_frame_range_indices(trim_beginning, trim_ending, nframes):
     """
     Compute the total number of frames to be extracted, and find the start and end indices.
@@ -369,7 +633,9 @@ def get_frame_range_indices(trim_beginning, trim_ending, nframes):
     first_frame_idx (int): index of the frame to begin extraction from
     last_frame_idx (int): index of the last frame in the extraction
     """
-    assert all((trim_ending >= 0, trim_beginning >= 0)) , "frame_trim arguments must be greater than or equal to 0!"
+    assert all(
+        (trim_ending >= 0, trim_beginning >= 0)
+    ), "frame_trim arguments must be greater than or equal to 0!"
 
     first_frame_idx = 0
     if trim_beginning > 0 and trim_beginning < nframes:
@@ -383,6 +649,7 @@ def get_frame_range_indices(trim_beginning, trim_ending, nframes):
 
     return total_frames, first_frame_idx, last_frame_idx
 
+
 def scalar_attributes():
     """
     Gets scalar attributes dict with names paired with descriptions.
@@ -392,26 +659,27 @@ def scalar_attributes():
     """
 
     attributes = {
-        'centroid_x_px': 'X centroid (pixels)',
-        'centroid_y_px': 'Y centroid (pixels)',
-        'velocity_2d_px': '2D velocity (pixels / frame), note that missing frames are not accounted for',
-        'velocity_3d_px': '3D velocity (pixels / frame), note that missing frames are not accounted for, also height is in mm, not pixels for calculation',
-        'width_px': 'Mouse width (pixels)',
-        'length_px': 'Mouse length (pixels)',
-        'area_px': 'Mouse area (pixels)',
-        'centroid_x_mm': 'X centroid (mm)',
-        'centroid_y_mm': 'Y centroid (mm)',
-        'velocity_2d_mm': '2D velocity (mm / frame), note that missing frames are not accounted for',
-        'velocity_3d_mm': '3D velocity (mm / frame), note that missing frames are not accounted for',
-        'width_mm': 'Mouse width (mm)',
-        'length_mm': 'Mouse length (mm)',
-        'area_mm': 'Mouse area (mm)',
-        'height_ave_mm': 'Mouse average height (mm)',
-        'angle': 'Angle (radians, unwrapped)',
-        'velocity_theta': 'Angular component of velocity (arctan(vel_x, vel_y))'
+        "centroid_x_px": "X centroid (pixels)",
+        "centroid_y_px": "Y centroid (pixels)",
+        "velocity_2d_px": "2D velocity (pixels / frame), note that missing frames are not accounted for",
+        "velocity_3d_px": "3D velocity (pixels / frame), note that missing frames are not accounted for, also height is in mm, not pixels for calculation",
+        "width_px": "Mouse width (pixels)",
+        "length_px": "Mouse length (pixels)",
+        "area_px": "Mouse area (pixels)",
+        "centroid_x_mm": "X centroid (mm)",
+        "centroid_y_mm": "Y centroid (mm)",
+        "velocity_2d_mm": "2D velocity (mm / frame), note that missing frames are not accounted for",
+        "velocity_3d_mm": "3D velocity (mm / frame), note that missing frames are not accounted for",
+        "width_mm": "Mouse width (mm)",
+        "length_mm": "Mouse length (mm)",
+        "area_mm": "Mouse area (mm)",
+        "height_ave_mm": "Mouse average height (mm)",
+        "angle": "Angle (radians, unwrapped)",
+        "velocity_theta": "Angular component of velocity (arctan(vel_x, vel_y))",
     }
 
     return attributes
+
 
 def gen_batch_sequence(nframes, chunk_size, overlap, offset=0):
     """
@@ -430,8 +698,9 @@ def gen_batch_sequence(nframes, chunk_size, overlap, offset=0):
     seq = range(offset, nframes)
     out = []
     for i in range(0, len(seq) - overlap, chunk_size - overlap):
-        out.append(seq[i:i + chunk_size])
+        out.append(seq[i : i + chunk_size])
     return out
+
 
 def read_yaml(yaml_file):
     """
@@ -444,8 +713,9 @@ def read_yaml(yaml_file):
     return_dict (dict): dict of yaml contents
     """
 
-    with open(yaml_file, 'r') as f:
+    with open(yaml_file, "r") as f:
         return yaml.safe_load(f)
+
 
 def write_image(
     filename, image, scale=True, scale_factor=None, frame_dtype="uint16", compress=0
@@ -623,7 +893,8 @@ def write_frames_preview(
         return None
     else:
         return pipe
-    
+
+
 def read_frames(
     filename,
     frames=range(
@@ -731,6 +1002,7 @@ def read_frames(
 
     return video.astype("uint16")
 
+
 def get_stream_names(filename, stream_tag="title"):
     """
     Run an FFProbe command to determine whether an input video file contains multiple streams, and
@@ -765,6 +1037,7 @@ def get_stream_names(filename, stream_tag="title"):
     out = out.decode("utf-8").rstrip("\n").split("\n")
 
     return {o: i for i, o in enumerate(out)}
+
 
 def get_video_info(filename, mapping="DEPTH", threads=8, count_frames=False, **kwargs):
     """
