@@ -39,7 +39,6 @@ click.core.Option.__init__ = new_init
 def cli():
     pass
 
-
 def common_avi_options(function):
     """
     Decorator function for grouping shared video processing parameters.
@@ -330,19 +329,6 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
 
     return function
 
-
-@cli.command(
-    name="find-roi",
-    cls=command_with_config("config_file"),
-    help="Finds the ROI (the arena) and background to subtract from frames when extracting.",
-)
-@click.argument("input-file", type=click.Path(exists=True))
-@common_roi_options
-def find_roi(input_file, output_dir, **config_data):
-
-    get_roi_wrapper(input_file, config_data, output_dir)
-
-
 @cli.command(
     name="extract",
     cls=command_with_config("config_file"),
@@ -356,7 +342,6 @@ def find_roi(input_file, output_dir, **config_data):
     default="local",
     help="Platform to train models on",
 )
-@common_roi_options
 @common_avi_options
 @extract_options
 def extract(input_file, output_dir, num_frames, skip_completed, **config_data):
@@ -372,7 +357,6 @@ def extract(input_file, output_dir, num_frames, skip_completed, **config_data):
     help="Batch processes " "all the raw depth recordings located in the input folder.",
 )
 @click.argument("input-folder", type=click.Path(exists=True, resolve_path=False))
-@common_roi_options
 @common_avi_options
 @extract_options
 @click.option(
