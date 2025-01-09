@@ -653,7 +653,6 @@ def clean_frames(
     prefilter_time=None,
     strel_tail=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
     iters_tail=None,
-    frame_dtype="uint8",
     strel_min=cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
     iters_min=None,
     progress_bar=False,
@@ -677,7 +676,7 @@ def clean_frames(
     """
 
     # seeing enormous speed gains w/ opencv
-    filtered_frames = frames.copy().astype(frame_dtype)
+    filtered_frames = frames.copy()
 
     for i in tqdm(
         range(frames.shape[0]), disable=not progress_bar, desc="Cleaning frames"
