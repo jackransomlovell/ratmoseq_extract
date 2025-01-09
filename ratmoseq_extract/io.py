@@ -10,10 +10,16 @@ import json
 import warnings
 import os
 import tifffile
+from typing import Pattern
+import re
+from cytoolz import keymap
 import click
 import h5py
 from pkg_resources import get_distribution
-from os.path import exists, join, dirname, basename, splitext
+from glob import glob
+from os.path import exists, join, dirname, basename, abspath, splitext
+from toolz import valmap
+import shutil
 
 
 def generate_missing_metadata(sess_dir, sess_name):
@@ -1101,3 +1107,636 @@ def get_video_info(filename, mapping="DEPTH", threads=8, count_frames=False, **k
         out_dict["nframes"] = None
 
     return out_dict
+
+
+def check_completion_status(status_filename):
+    """
+    Read a results_00.yaml (status file) and checks whether the session has been
+    fully extracted.
+
+    Args:
+    status_filename (str): path to results_00.yaml
+
+    Returns:
+    complete (bool): If True, data has been extracted to completion.
+    """
+
+    if exists(status_filename):
+        return read_yaml(status_filename)["complete"]
+    return False
+
+
+def recursive_find_unextracted_dirs(
+    root_dir=os.getcwd(),
+    session_pattern=r"session_\d+\.(?:tgz|tar\.gz)",
+    extension=".dat",
+    yaml_path="proc/results_00.yaml",
+    metadata_path="metadata.json",
+    skip_checks=False,
+):
+    """
+    Recursively find unextracted (or incompletely extracted) directories
+
+    Args:
+    root_dir (str): path to base directory to start recursive search for unextracted folders.
+    session_pattern (str): folder name pattern to search for
+    extension (str): file extension to search for
+    yaml_path (str): path to respective extracted metadata
+    metadata_path (str): path to relative metadata.json files
+    skip_checks (bool): indicates whether to check if the files exist at the given relative paths
+
+    Returns:
+    proc_dirs (1d-list): list of paths to each unextracted session's proc/ directory
+    """
+
+    session_archive_pattern = re.compile(session_pattern)
+
+    proc_dirs = []
+    for root, _, files in os.walk(root_dir):
+        for file in files:
+            if file.endswith(extension) and not file.startswith(
+                "ir"
+            ):  # test for uncompressed session
+                status_file = join(root, yaml_path)
+                metadata_file = join(root, metadata_path)
+            elif session_archive_pattern.fullmatch(file):  # test for compressed session
+                session_name = basename(file).replace(".tar.gz", "").replace(".tgz", "")
+                status_file = join(root, session_name, yaml_path)
+                metadata_file = join(root, "{}.json".format(session_name))
+            else:
+                continue  # skip this current file as it does not look like session data
+
+            # perform checks, append depth file to list if extraction is missing or incomplete
+            if skip_checks or (
+                not check_completion_status(status_file) and exists(metadata_file)
+            ):
+                proc_dirs.append(join(root, file))
+
+    return proc_dirs
+
+
+def recursive_find_h5s(root_dir=os.getcwd(), ext=".h5", yaml_string="{}.yaml"):
+    """
+    Recursively find h5 files, along with yaml files with the same basename
+
+    Args:
+    root_dir (str): path to base directory to begin recursive search in.
+    ext (str): extension to search for
+    yaml_string (str): string for filename formatting when saving data
+
+    Returns:
+    h5s (list): list of found h5 files
+    dicts (list): list of found metadata files
+    yamls (list): list of found yaml files
+    """
+    if not ext.startswith("."):
+        ext = "." + ext
+
+    def has_frames(f):
+        try:
+            with h5py.File(f, "r") as h5f:
+                return "frames" in h5f
+        except OSError:
+            warnings.warn(f"Error reading {f}, skipping...")
+            return False
+
+    h5s = glob(join(abspath(root_dir), "**", f"*{ext}"), recursive=True)
+    h5s = filter(lambda f: exists(yaml_string.format(f.replace(ext, ""))), h5s)
+    h5s = list(filter(has_frames, h5s))
+    yamls = list(map(lambda f: yaml_string.format(f.replace(ext, "")), h5s))
+    dicts = list(map(read_yaml, yamls))
+
+    return h5s, dicts, yamls
+
+
+def clean_dict(dct):
+    """
+    Standardize types of dict value.
+
+    Args:
+    dct (dict): dict object with mixed type value objects.
+
+    Returns:
+    out (dict): dict object with list value objects.
+    """
+
+    def clean_entry(e):
+        if isinstance(e, dict):
+            out = clean_dict(e)
+        elif isinstance(e, np.ndarray):
+            out = e.tolist()
+        elif isinstance(e, np.generic):
+            out = np.asscalar(e)
+        else:
+            out = e
+        return out
+
+    return valmap(clean_entry, dct)
+
+
+def _load_h5_to_dict(file: h5py.File, path) -> dict:
+    """
+    Loads h5 contents to dictionary object.
+
+    Args:
+    h5file (h5py.File): file path to the given h5 file or the h5 file handle
+    path (str): path to the base dataset within the h5 file
+
+    Returns:
+    ans (dict): a dict with h5 file contents with the same path structure
+    """
+
+    ans = {}
+    for key, item in file[path].items():
+        if isinstance(item, h5py._hl.dataset.Dataset):
+            ans[key] = item[()]
+        elif isinstance(item, h5py._hl.group.Group):
+            ans[key] = _load_h5_to_dict(file, "/".join([path, key]))
+    return ans
+
+
+def h5_to_dict(h5file, path) -> dict:
+    """
+    Load h5 contents to dictionary object.
+
+    Args:
+    h5file (str or h5py.File): file path to the given h5 file or the h5 file handle
+    path (str): path to the base dataset within the h5 file
+
+    Returns:
+    out (dict): a dict with h5 file contents with the same path structure
+    """
+
+    if isinstance(h5file, str):
+        with h5py.File(h5file, "r") as f:
+            out = _load_h5_to_dict(f, path)
+    elif isinstance(h5file, h5py.File):
+        out = _load_h5_to_dict(h5file, path)
+    else:
+        raise Exception("file input not understood - need h5 file path or file object")
+    return out
+
+
+def copy_h5_metadata_to_yaml(input_dir, h5_metadata_path):
+    """
+    Copy user specified metadata from h5path to a yaml file.
+
+    Args:
+    input_dir (str): path to directory containing h5 files
+    h5_metadata_path (str): path within h5 to desired metadata to copy to yaml.
+
+    """
+
+    h5s, dicts, yamls = recursive_find_h5s(input_dir)
+    to_load = [
+        (tmp, yml, file)
+        for tmp, yml, file in zip(dicts, yamls, h5s)
+        if tmp["complete"] and not tmp["skip"]
+    ]
+
+    # load in all of the h5 files, grab the extraction metadata, reformat to make nice 'n pretty
+    # then stage the copy
+
+    for tup in tqdm(to_load, desc="Copying data to yamls"):
+        with h5py.File(tup[2], "r") as f:
+            tmp = clean_dict(h5_to_dict(f, h5_metadata_path))
+            tup[0]["metadata"] = dict(tmp)
+
+        new_file = f"{basename(tup[1])}_update.yaml"
+        with open(new_file, "w+") as f:
+            yaml.safe_dump(tup[0], f)
+
+        if new_file != tup[1]:
+            shutil.move(new_file, tup[1])
+
+
+def build_index_dict(files_to_use):
+    """
+    Create a dictionary for the index file from a list of files and respective metadatas.
+
+    Args:
+    files_to_use (list): list of paths to extracted h5 files.
+
+    Returns:
+    output_dict (dict): index-file dictionary containing all aggregated extractions.
+    """
+
+    output_dict = {"files": [], "pca_path": ""}
+
+    index_uuids = []
+    for i, file_tup in enumerate(files_to_use):
+        if file_tup[2]["uuid"] not in index_uuids:
+            tmp = {
+                "path": (file_tup[0], file_tup[1]),
+                "uuid": file_tup[2]["uuid"],
+                "group": "default",
+                "metadata": {
+                    "SessionName": f"default_{i}",
+                    "SubjectName": f"default_{i}",
+                },  # fallback metadata
+            }
+
+            # handling metadata sub-dictionary values
+            if "metadata" in file_tup[2]:
+                tmp["metadata"].update(file_tup[2]["metadata"])
+            else:
+                warnings.warn(
+                    f"Could not locate metadata for {file_tup[0]}! File will be listed with minimal default metadata."
+                )
+
+            index_uuids.append(file_tup[2]["uuid"])
+            # appending file with default information
+            output_dict["files"].append(tmp)
+
+    return output_dict
+
+
+def filter_warnings(func):
+    """
+    Applies warnings.simplefilter() to ignore warnings when
+     running the main gui functionaity in a Jupyter Notebook.
+     The function will filter out: yaml.error.UnsafeLoaderWarning, FutureWarning and UserWarning.
+
+    Args:
+    func (function): function to silence enclosed warnings.
+
+    Returns:
+    apply_warning_filters (func): Returns passed function after warnings filtering is completed.
+    """
+
+    def apply_warning_filters(*args, **kwargs):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", yaml.error.UnsafeLoaderWarning)
+            warnings.simplefilter(action="ignore", category=FutureWarning)
+            warnings.simplefilter(action="ignore", category=UserWarning)
+            return func(*args, **kwargs)
+
+    return apply_warning_filters
+
+
+@filter_warnings
+def generate_index(input_dir, output_file):
+    """
+    Generate index file containing a summary of all extracted sessions.
+
+    Args:
+    input_dir (str): directory to search for extracted sessions.
+    output_file (str): preferred name of the index file.
+
+    Returns:
+    output_file (str): path to index file (moseq2-index.yaml).
+    """
+
+    # gather the h5s and the pca scores file
+    # uuids should match keys in the scores file
+    h5s, dicts, yamls = recursive_find_h5s(input_dir)
+
+    file_with_uuids = [
+        (abspath(h5), abspath(yml), meta) for h5, yml, meta in zip(h5s, yamls, dicts)
+    ]
+
+    # Ensuring all retrieved extracted session h5s have the appropriate metadata
+    # included in their results_00.h5 file
+    for file in file_with_uuids:
+        try:
+            if "metadata" not in file[2]:
+                copy_h5_metadata_to_yaml(input_dir, file[0])
+        except:
+            warnings.warn(
+                f"Metadata for session {file[0]} not found. \
+            File may be listed with minimal/defaulted metadata in index file."
+            )
+
+    print(f"Number of sessions included in index file: {len(file_with_uuids)}")
+
+    # Create index file in dict form
+    output_dict = build_index_dict(file_with_uuids)
+
+    # write out index yaml
+    with open(output_file, "w") as f:
+        yaml.safe_dump(output_dict, f)
+
+    return output_file
+
+
+def camel_to_snake(s):
+    """
+    Convert CamelCase to snake_case
+
+    Args:
+    s (str): CamelCase string to convert to snake_case.
+
+    Returns:
+    (str): string in snake_case
+    """
+    _underscorer1: Pattern[str] = re.compile(r"(.)([A-Z][a-z]+)")
+    _underscorer2 = re.compile("([a-z0-9])([A-Z])")
+
+    subbed = _underscorer1.sub(r"\1_\2", s)
+    return _underscorer2.sub(r"\1_\2", subbed).lower()
+
+
+def load_extraction_meta_from_h5s(to_load, snake_case=True):
+    """
+    Load extraction metadata from h5 files.
+
+    Args:
+    to_load (list): list of paths to h5 files.
+    snake_case (bool): whether to save the files using snake_case
+
+    Returns:
+    loaded (list): list of loaded h5 dicts.
+    """
+
+    loaded = []
+    for _dict, _h5f in tqdm(to_load, desc="Scanning data"):
+        try:
+            # v0.1.3 introduced a change - acq. metadata now here
+            tmp = h5_to_dict(_h5f, "/metadata/acquisition")
+        except KeyError:
+            # if it doesn't exist it's likely from an older moseq version. Try loading it here
+            try:
+                tmp = h5_to_dict(_h5f, "/metadata/extraction")
+            except KeyError:
+                # if all else fails, abandon all hope
+                tmp = {}
+
+        # note that everything going into here must be a string (no bytes!)
+        tmp = {k: str(v) for k, v in tmp.items()}
+        if snake_case:
+            tmp = keymap(camel_to_snake, tmp)
+
+        # Specific use case block: Behavior reinforcement experiments
+        feedback_file = join(dirname(_h5f), "..", "feedback_ts.txt")
+        if exists(feedback_file):
+            timestamps = map(int, load_timestamps(feedback_file, 0))
+            feedback_status = map(int, load_timestamps(feedback_file, 1))
+            _dict["feedback_timestamps"] = list(zip(timestamps, feedback_status))
+
+        _dict["extraction_metadata"] = tmp
+        loaded += [(_dict, _h5f)]
+
+    return loaded
+
+
+def load_textdata(data_file, dtype=np.float32):
+    """
+    Loads timestamp from txt/csv file.
+
+    Args:
+    data_file (str): path to timestamp file
+    dtype (dtype): data type of timestamps
+
+    Returns:
+    data (np.ndarray): timestamp data
+    timestamps (numpy.array): the array for the timestamps
+    """
+
+    data = []
+    timestamps = []
+    with open(data_file, "r") as f:
+        for line in f.readlines():
+            tmp = line.split(" ", 1)
+            # appending timestamp value
+            timestamps.append(int(float(tmp[0])))
+
+            # append data indicator value
+            clean_data = np.fromstring(
+                tmp[1].replace(" ", "").strip(), sep=",", dtype=dtype
+            )
+            data.append(clean_data)
+
+    data = np.stack(data, axis=0).squeeze()
+    timestamps = np.array(timestamps, dtype=np.int)
+
+    return data, timestamps
+
+
+def time_str_for_filename(time_str: str) -> str:
+    """
+    Process the timestamp to be used in the filename.
+
+    Args:
+    time_str (str): time str to format
+
+    Returns:
+    out (str): formatted timestamp str
+    """
+
+    out = time_str.split(".")[0]
+    out = out.replace(":", "-").replace("T", "_")
+    return out
+
+
+def clean_file_str(file_str: str, replace_with: str = "-") -> str:
+    """
+    Removes invalid characters for a file name from a string.
+
+    Args:
+    file_str (str): filename substring to replace
+    replace_with (str): value to replace str with
+
+    Returns:
+    out (str): cleaned file string
+    """
+
+    out = re.sub(r'[ <>:"/\\|?*\']', replace_with, file_str)
+    # find any occurrences of `replace_with`, i.e. (--)
+    return re.sub(replace_with * 2, replace_with, out)
+
+
+def build_path(keys: dict, format_string: str, snake_case=True) -> str:
+    """
+    Produce a new file name using keys collected from extraction h5 files.
+
+    Args:
+    keys (dict): dictionary specifying which keys used to produce the new file name
+    format_string (str): the string to reformat using the `keys` dictionary i.e. '{subject_name}_{session_name}'.
+    snake_case (bool): flag to save the files with snake_case
+
+    Returns:
+    out (str): a newly formatted filename useable with any operating system
+    """
+
+    if "start_time" in keys:
+        # process the time value
+        keys["start_time"] = time_str_for_filename(keys["start_time"])
+
+    if snake_case:
+        keys = valmap(camel_to_snake, keys)
+
+    return clean_file_str(format_string.format(**keys))
+
+
+def build_manifest(loaded, format, snake_case=True):
+    """
+    Build a manifest file used to contain extraction result metadata from h5 and yaml files.
+
+    Args:
+    loaded (list of dicts): list of dicts containing loaded h5 data.
+    format (str): filename format indicating the new name for the metadata files in the aggregate_results dir.
+    snake_case (bool): whether to save the files using snake_case
+
+    Returns:
+    manifest (dict): dictionary of extraction metadata.
+    """
+
+    manifest = {}
+    fallback = "session_{:03d}"
+    fallback_count = 0
+
+    # Additional metadata for certain use cases
+    additional_meta = []
+
+    # Behavior reinforcement metadata
+    additional_meta.append(
+        {
+            "filename": "feedback_ts.txt",
+            "var_name": "realtime_feedback",
+            "dtype": np.bool,
+        }
+    )
+
+    # Pre-trained model real-time syllable classification results
+    additional_meta.append(
+        {
+            "filename": "predictions.txt",
+            "var_name": "realtime_predictions",
+            "dtype": np.int,
+        }
+    )
+
+    # Real-Time Recorded/Computed PC Scores
+    additional_meta.append(
+        {
+            "filename": "pc_scores.txt",
+            "var_name": "realtime_pc_scores",
+            "dtype": np.float32,
+        }
+    )
+
+    for _dict, _h5f in loaded:
+        print_format = f"{format}_{splitext(basename(_h5f))[0]}"
+        if not _dict["extraction_metadata"]:
+            copy_path = fallback.format(fallback_count)
+            fallback_count += 1
+        else:
+            try:
+                copy_path = build_path(
+                    _dict["extraction_metadata"], print_format, snake_case=snake_case
+                )
+            except:
+                copy_path = fallback.format(fallback_count)
+                fallback_count += 1
+                pass
+
+        # add a bonus dictionary here to be copied to h5 file itself
+        manifest[_h5f] = {
+            "copy_path": copy_path,
+            "yaml_dict": _dict,
+            "additional_metadata": {},
+        }
+        for meta in additional_meta:
+            filename = join(dirname(_h5f), "..", meta["filename"])
+            if exists(filename):
+                try:
+                    data, timestamps = load_textdata(filename, dtype=meta["dtype"])
+                    manifest[_h5f]["additional_metadata"][meta["var_name"]] = {
+                        "data": data,
+                        "timestamps": timestamps,
+                    }
+                except:
+                    warnings.warn(
+                        "WARNING: Did not load timestamps! This may cause issues if total dropped frames > 2% of the session."
+                    )
+
+    return manifest
+
+
+def copy_manifest_results(manifest, output_dir):
+    """
+    Copy all consolidated manifest results to their respective output files.
+
+    Args:
+    manifest (dict): manifest dictionary containing all extraction h5 metadata to save
+    output_dir (str): path to directory where extraction results will be aggregated.
+
+    """
+
+    if not exists(output_dir):
+        os.makedirs(output_dir)
+
+    # now the key is the source h5 file and the value is the path to copy to
+    for k, v in tqdm(manifest.items(), desc="Copying files"):
+
+        if exists(join(output_dir, f'{v["copy_path"]}.h5')):
+            continue
+
+        in_basename = splitext(basename(k))[0]
+        in_dirname = dirname(k)
+
+        h5_path = k
+        mp4_path = join(in_dirname, f"{in_basename}.mp4")
+
+        if exists(h5_path):
+            new_h5_path = join(output_dir, f'{v["copy_path"]}.h5')
+            shutil.copyfile(h5_path, new_h5_path)
+
+        # if we have additional_meta then crack open the h5py and write to a safe place
+        if len(v["additional_metadata"]) > 0:
+            for k2, v2 in v["additional_metadata"].items():
+                new_key = f"/metadata/misc/{k2}"
+                with h5py.File(new_h5_path, "a") as f:
+                    f.create_dataset(f"{new_key}/data", data=v2["data"])
+                    f.create_dataset(f"{new_key}/timestamps", data=v2["timestamps"])
+
+        if exists(mp4_path):
+            shutil.copyfile(mp4_path, join(output_dir, f'{v["copy_path"]}.mp4'))
+
+        v["yaml_dict"].pop("extraction_metadata", None)
+        with open(f'{join(output_dir, v["copy_path"])}.yaml', "w") as f:
+            yaml.safe_dump(v["yaml_dict"], f)
+
+
+def aggregate_extract_results_wrapper(
+    input_dir, format, output_dir, mouse_threshold=0.0
+):
+    """
+    Aggregate results to one folder and generate index file (moseq2-index.yaml).
+
+    Args:
+    input_dir (str): path to base directory containing all session folders
+    format (str): string format for metadata to use as the new aggregated filename
+    output_dir (str): name of the directory to create and store all results in
+    mouse_threshold (float): threshold value of mean frame depth to include session frames
+
+    Returns:
+    indexpath (str): path to generated index file including all aggregated session information.
+    """
+
+    h5s, dicts, _ = recursive_find_h5s(input_dir)
+
+    not_in_output = lambda f: not exists(join(output_dir, basename(f)))
+    complete = lambda d: d["complete"] and not d["skip"]
+
+    def filter_h5(args):
+        """remove h5's that should be skipped or extraction wasn't complete"""
+        _dict, _h5 = args
+        return complete(_dict) and not_in_output(_h5) and ("sample" not in _dict)
+
+    # load in all of the h5 files, grab the extraction metadata, reformat to make nice 'n pretty
+    # then stage the copy
+    to_load = list(filter(filter_h5, zip(dicts, h5s)))
+
+    loaded = load_extraction_meta_from_h5s(to_load)
+
+    manifest = build_manifest(loaded, format=format)
+
+    copy_manifest_results(manifest, output_dir)
+
+    print("Results successfully aggregated in", output_dir)
+
+    indexpath = generate_index(output_dir, join(input_dir, "moseq2-index.yaml"))
+
+    print(f"Index file path: {indexpath}")
+    return indexpath
