@@ -13,7 +13,7 @@ from ratmoseq_extract.proc import (
     apply_roi,
     get_frame_features,
     get_flips,
-    compute_scalars
+    compute_scalars,
 )
 
 
@@ -24,11 +24,10 @@ def extract_chunk(
     temporal_filter_size=None,
     tail_filter_iters=1,
     iters_min=0,
-    strel_tail=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)),
+    strel_tail=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)),
     strel_min=cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
     min_height=10,
-    max_height=100,
-    mask_threshold=-20,
+    max_height=300,
     use_cc=False,
     bground=None,
     roi=None,
@@ -38,7 +37,6 @@ def extract_chunk(
     crop_size=(256, 256),
     true_depth=950,
     compute_raw_scalars=False,
-    sam2=False,
     sam2_checkpoint=None,
     sam2_points=None,
     **kwargs
@@ -82,17 +80,7 @@ def extract_chunk(
     """
 
     if bground is not None:
-        # Perform background subtraction
-        if not kwargs.get('graduate_walls', False):
-            # pixels with a value of 0 are depth values that could not be computed
-            chunk = ((bground - chunk) * (chunk != 0)).astype(int)
-        else:
-            # Subtracting only background area where mouse is not on the bucket edge
-            mouse_on_edge = (bground < true_depth) & (chunk < bground)
-            chunk = (bground - chunk) * np.logical_not(mouse_on_edge) + (
-                true_depth - chunk
-            ) * mouse_on_edge
-
+        chunk = (chunk - bground).astype(chunk.dtype)
         # Threshold chunk depth values at min and max heights
         chunk = threshold_chunk(chunk, min_height, max_height).astype(int)
 
@@ -100,33 +88,28 @@ def extract_chunk(
     if roi is not None:
         chunk = apply_roi(chunk, roi)
         # TODO: modify the keypoint coords to reflect the new ROI
-    
+
     # pack clean params into a dict
     clean_params = {
-        'prefilter_space': spatial_filter_size,
-        'prefilter_time': temporal_filter_size,
-        'iters_tail': tail_filter_iters,
-        'strel_tail': strel_tail,
-        'iters_min': iters_min,
-        'strel_min': strel_min,
-        'progress_bar': progress_bar,
+        "prefilter_space": spatial_filter_size,
+        "prefilter_time": temporal_filter_size,
+        "iters_tail": tail_filter_iters,
+        "strel_tail": strel_tail,
+        "iters_min": iters_min,
+        "strel_min": strel_min,
+        "progress_bar": progress_bar,
     }
-    
+
     # get the sam2 predictor
     predictor = get_sam2_predictor(sam2_checkpoint)
     # TODO if somehow detect centroid if not DLC keypoints
 
     # get masks from sam2
     masks, _ = segment_chunk(
-        chunk, 
-        predictor, 
-        sam2_points, 
-        clean_params, 
-        inference_state=None
-        )
+        chunk, predictor, sam2_points, clean_params, inference_state=None
+    )
     # apply masks to chunk
     chunk = chunk * masks
-    
 
     # Denoise the frames before we do anything else
     filtered_frames = clean_frames(
@@ -137,7 +120,6 @@ def extract_chunk(
         strel_tail=strel_tail,
         iters_min=iters_min,
         strel_min=strel_min,
-        # frame_dtype=frame_dtype,
         progress_bar=progress_bar,
     )
 
@@ -212,7 +194,7 @@ def extract_chunk(
         "depth_frames": cropped_frames,
         "mask_frames": masks,
         "scalars": scalars,
-        "flips": flips
+        "flips": flips,
     }
 
     return results
