@@ -19,6 +19,11 @@ To check torch you can run the following code from the terminal with your conda 
 python -c "import torch; print(torch.cuda.is_available())"
 ```
 If the above fails, please see the debugging docs TODO: link debugging
+Next install your conda environment as a ipykernel so you can run the sam2 demo notebooks
+```
+pip install ipykernel
+python -m ipykernel install --user --name ratmoseq_extract
+```
 To test that Sam2 worked, please follow the notebook [linked here](https://github.com/facebookresearch/sam2/blob/main/notebooks/image_predictor_example.ipynb)
 ## Installing the rest of the project
 TODO: add pip install here
