@@ -45,6 +45,7 @@ from ratmoseq_extract.io import (
     write_image,
     create_extract_h5,
     read_yaml,
+    filter_warnings,
 )
 
 
@@ -494,29 +495,6 @@ def extract_chunk(
     }
 
     return results
-
-
-def filter_warnings(func):
-    """
-    Applies warnings.simplefilter() to ignore warnings when
-     running the main gui functionaity in a Jupyter Notebook.
-     The function will filter out: yaml.error.UnsafeLoaderWarning, FutureWarning and UserWarning.
-
-    Args:
-    func (function): function to silence enclosed warnings.
-
-    Returns:
-    apply_warning_filters (func): Returns passed function after warnings filtering is completed.
-    """
-
-    def apply_warning_filters(*args, **kwargs):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", yaml.error.UnsafeLoaderWarning)
-            warnings.simplefilter(action="ignore", category=FutureWarning)
-            warnings.simplefilter(action="ignore", category=UserWarning)
-            return func(*args, **kwargs)
-
-    return apply_warning_filters
 
 
 @filter_warnings

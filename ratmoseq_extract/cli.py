@@ -49,33 +49,23 @@ def command_with_config(config_file_param_name):
         def invoke(self, ctx):
             # grab the config file
             config_file = ctx.params[config_file_param_name]
-            param_defaults = {
-                p.human_readable_name: p.default
-                for p in self.params
-                if isinstance(p, click.core.Option)
-            }
-            param_defaults = {
-                k: tuple(v) if type(v) is list else v for k, v in param_defaults.items()
-            }
-            param_cli = {
-                k: tuple(v) if type(v) is list else v for k, v in ctx.params.items()
-            }
+            param_defaults = {p.human_readable_name: p.default for p in self.params
+                              if isinstance(p, click.core.Option)}
+            param_defaults = {k: tuple(v) if type(v) is list else v for k, v in param_defaults.items()}
+            param_cli = {k: tuple(v) if type(v) is list else v for k, v in ctx.params.items()}
 
             if config_file is not None:
 
                 config_data = read_yaml(config_file)
                 # set config_data['output_file'] ['output_dir'] ['input_dir'] to None to avoid overwriting previous files
                 # assuming users would either input their own paths or use the default path
-                config_data["input_dir"] = None
-                config_data["output_dir"] = None
-                config_data["output_file"] = None
+                config_data['input_dir'] = None
+                config_data['output_dir'] = None
+                config_data['output_file'] = None
 
                 # modified to only use keys that are actually defined in options and the value is not not none
-                config_data = {
-                    k: tuple(v) if isinstance(v, yaml.comments.CommentedSeq) else v
-                    for k, v in config_data.items()
-                    if k in param_defaults.keys() and v is not None
-                }
+                config_data = {k: tuple(v) if isinstance(v, yaml.comments.CommentedSeq) else v
+                               for k, v in config_data.items() if k in param_defaults.keys() and v is not None}
 
                 # find differences btw config and param defaults
                 diffs = set(param_defaults.items()) ^ set(param_cli.items())
@@ -89,23 +79,13 @@ def command_with_config(config_file_param_name):
                     combined[k] = ctx.params[k]
 
                 ctx.params = combined
-
+                
                 # add new parameters to the original config file
                 config_data = read_yaml(config_file)
-
+                
                 # remove flags from combined so the flag values in config.yaml won't get overwritten
-                flag_list = [
-                    "manual_set_depth_range",
-                    "use_plane_bground",
-                    "progress_bar",
-                    "delete",
-                    "compute_raw_scalars",
-                    "skip_completed",
-                    "skip_checks",
-                    "get_cmd",
-                    "run_cmd",
-                ]
-                combined = {k: v for k, v in combined.items() if k not in flag_list}
+                flag_list = ['manual_set_depth_range', 'use_plane_bground', 'progress_bar', 'delete', 'compute_raw_scalars', 'skip_completed', 'skip_checks', 'get_cmd', 'run_cmd']
+                combined = {k:v for k, v in combined.items() if k not in flag_list}
                 # combine original config data and the combined params prioritizing the combined
                 config_data = {**config_data, **combined}
                 # with open(config_file, 'w') as f:
@@ -114,7 +94,6 @@ def command_with_config(config_file_param_name):
             return super().invoke(ctx)
 
     return custom_command_class
-
 
 click.core.Option.__init__ = new_init
 
