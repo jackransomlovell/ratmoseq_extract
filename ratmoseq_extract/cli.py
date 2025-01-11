@@ -4,7 +4,7 @@ CLI for extracting the depth data.
 
 import os
 import click
-import ruamel.yaml as yaml
+from ruamel.yaml import YAML
 from tqdm.auto import tqdm
 from copy import deepcopy
 from ratmoseq_extract.extract import (
@@ -24,6 +24,7 @@ from ratmoseq_extract.io import (
 
 orig_init = click.core.Option.__init__
 
+yaml = YAML(typ='safe', pure=True)  # Instantiate the YAML object with safe mode and pure Python implementation
 
 def new_init(self, *args, **kwargs):
     orig_init(self, *args, **kwargs)
@@ -499,15 +500,15 @@ def generate_config(output_file, camera_type):
     objs = extract.params
     params = {tmp.name: tmp.default for tmp in objs if not tmp.required}
     if camera_type == "azure":
-        params["bg_roi_depth_range"] = [550, 650]
+        # params["bg_roi_depth_range"] = [550, 650]
         params["spatial_filter_size"] = [5]
         params["tail_filter_size"] = [15, 15]
-        params["crop_size"] = [120, 120]
+        params["crop_size"] = [256, 256]
         params["camera_type"] = "azure"
 
     with open(output_file, "w") as f:
-        yaml.safe_dump(params, f)
-
+        yaml.dump(params, f)  # Dump the params into the file
+        
     print("Successfully generated config file in base directory.")
 
 
