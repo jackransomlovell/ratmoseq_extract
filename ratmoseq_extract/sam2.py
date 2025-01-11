@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 import cv2
 import tempfile
-from moseq2_extract.extract.proc import clean_frames
+from ratmoseq_extract.proc import clean_frames
 from sam2.build_sam import build_sam2_video_predictor
 
 

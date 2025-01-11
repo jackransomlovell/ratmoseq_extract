@@ -9,8 +9,7 @@ from tqdm import tqdm
 from pathlib import Path
 import uuid
 import os
-from os import dirname
-from os.path import join, exists, abspath, basename
+from os.path import join, exists, abspath, basename, dirname
 from os import makedirs, system
 import warnings
 import ruamel.yaml as yaml
@@ -18,7 +17,6 @@ import numpy as np
 import h5py
 
 
-from ratmoseq_extract.extract import extract_chunk
 from ratmoseq_extract.sam2 import get_sam2_predictor, segment_chunk, load_dlc
 from ratmoseq_extract.proc import (
     crop_and_rotate_frames,

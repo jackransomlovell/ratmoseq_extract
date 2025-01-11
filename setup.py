@@ -1,46 +1,56 @@
-"""Python setup.py for ratmoseq_extract package"""
-import io
+from setuptools import setup, find_packages
+import subprocess
+import codecs
+import sys
 import os
-from setuptools import find_packages, setup
 
 
-def read(*paths, **kwargs):
-    """Read the contents of a text file safely.
-    >>> read("ratmoseq_extract", "VERSION")
-    '0.1.0'
-    >>> read("README.md")
-    ...
-    """
-
-    content = ""
-    with io.open(
-        os.path.join(os.path.dirname(__file__), *paths),
-        encoding=kwargs.get("encoding", "utf8"),
-    ) as open_file:
-        content = open_file.read().strip()
-    return content
+def install(package):
+    subprocess.call([sys.executable, "-m", "pip", "install", package])
 
 
-def read_requirements(path):
-    return [
-        line.strip()
-        for line in read(path).split("\n")
-        if not line.startswith(('"', "#", "-", "git+"))
-    ]
+try:
+    import cv2
+except ImportError:
+    install('opencv-python')
 
+try:
+    import cython
+except ImportError:
+    install('cython')
 
+def read(rel_path):
+    here = os.path.abspath(os.path.dirname(__file__))
+    with codecs.open(os.path.join(here, rel_path), 'r') as fp:
+        return fp.read()
+
+def get_version(rel_path):
+    for line in read(rel_path).splitlines():
+        if line.startswith('__version__'):
+            delim = '"' if '"' in line else "'"
+            return line.split(delim)[1]
+    else:
+        raise RuntimeError("Unable to find version string.")
+
+# note that scikit-learn must == 0.19 since flip classifiers were trained using this version
 setup(
-    name="ratmoseq_extract",
-    version=read("ratmoseq_extract", "VERSION"),
-    description="Awesome ratmoseq_extract created by jackransomlovell",
-    url="https://github.com/jackransomlovell/ratmoseq_extract/",
-    long_description=read("README.md"),
-    long_description_content_type="text/markdown",
-    author="jackransomlovell",
-    packages=find_packages(exclude=["tests", ".github"]),
-    install_requires=read_requirements("requirements.txt"),
-    entry_points={
-        "console_scripts": ["ratmoseq_extract = ratmoseq_extract.__main__:main"]
+    name='ratmoseq-extract',
+    author='Datta Lab',
+    description='To boldly go where no RAT has gone before',
+    version=get_version('ratmoseq_extract/__init__.py'),
+    platforms=['mac', 'unix'],
+    packages=find_packages(),
+    # install_requires=['h5py==2.10.0', 'tqdm>=4.48.0', 'scipy==1.3.2', 'numpy==1.18.3', 'click==7.0',
+    #                   'joblib==0.15.1', 'cytoolz==0.10.1', 'matplotlib==3.1.2', 'statsmodels==0.10.2',
+    #                   'scikit-image==0.16.2', 'scikit-learn==0.20.3', 'opencv-python==4.1.2.30',
+    #                   'ruamel.yaml==0.16.5'],
+    # python_requires='>=3.6,<3.8',
+    entry_points={'console_scripts': ['ratmoseq-extract = ratmoseq_extract.cli:cli']},
+    extras_require={
+        "docs": [
+            "sphinx",
+            "sphinx-click",
+            "sphinx-rtd-theme",
+        ],
     },
-    extras_require={"test": read_requirements("requirements-test.txt")},
 )

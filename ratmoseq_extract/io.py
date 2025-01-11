@@ -21,6 +21,7 @@ from glob import glob
 from os.path import exists, join, dirname, basename, abspath, splitext
 from toolz import valmap
 import shutil
+import ast
 
 
 def generate_missing_metadata(sess_dir, sess_name):
@@ -2094,3 +2095,39 @@ def load_movie_data(
         )
 
     return frame_data
+
+
+def read_image(filename, scale=True, scale_key="scale_factor"):
+    """
+    Load image data
+
+    Args:
+    filename (str): path to output file
+    scale (bool): flag that indicates whether to scale image
+    scale_key (str): indicates scale factor.
+
+    Returns:
+    image (numpy.ndarray): loaded image
+    """
+
+    with tifffile.TiffFile(filename) as tif:
+        tmp = tif
+
+    image = tmp.asarray()
+
+    if scale:
+        image_desc = json.loads(tmp.pages[0].tags["image_description"].as_str()[2:-1])
+
+        try:
+            scale_factor = int(image_desc[scale_key])
+        except ValueError:
+            scale_factor = ast.literal_eval(image_desc[scale_key])
+
+        if type(scale_factor) is int:
+            image = image / scale_factor
+        elif type(scale_factor) is tuple:
+            iinfo = np.iinfo(image.dtype)
+            image = image.astype("float32") / iinfo.max
+            image = image * (scale_factor[1] - scale_factor[0]) + scale_factor[0]
+
+    return image
