@@ -4,7 +4,7 @@ import subprocess
 from tqdm import tqdm
 import datetime
 import matplotlib.pyplot as plt
-import ruamel.yaml as yaml
+from ruamel.yaml import YAML
 import tarfile
 import json
 import warnings
@@ -23,6 +23,7 @@ from toolz import valmap
 import shutil
 import ast
 
+yaml = YAML(typ='safe', pure=True)
 
 def generate_missing_metadata(sess_dir, sess_name):
     """
@@ -182,7 +183,7 @@ def read_yaml(yaml_file):
     """
 
     with open(yaml_file, "r") as f:
-        return yaml.safe_load(f)
+        return yaml.load(f)
 
 
 def dict_to_h5(h5, dic, root="/", annotations=None):
@@ -722,7 +723,7 @@ def read_yaml(yaml_file):
     """
 
     with open(yaml_file, "r") as f:
-        return yaml.safe_load(f)
+        return yaml.load(f)
 
 
 def write_image(

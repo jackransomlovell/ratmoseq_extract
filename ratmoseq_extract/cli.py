@@ -24,7 +24,7 @@ from ratmoseq_extract.io import (
 
 orig_init = click.core.Option.__init__
 
-yaml = YAML(typ='safe', pure=True)  # Instantiate the YAML object with safe mode and pure Python implementation
+yaml = YAML(typ='safe', pure=True)
 
 def new_init(self, *args, **kwargs):
     orig_init(self, *args, **kwargs)
@@ -63,11 +63,7 @@ def command_with_config(config_file_param_name):
                 config_data['input_dir'] = None
                 config_data['output_dir'] = None
                 config_data['output_file'] = None
-
-                # modified to only use keys that are actually defined in options and the value is not not none
-                config_data = {k: tuple(v) if isinstance(v, yaml.comments.CommentedSeq) else v
-                               for k, v in config_data.items() if k in param_defaults.keys() and v is not None}
-
+                
                 # find differences btw config and param defaults
                 diffs = set(param_defaults.items()) ^ set(param_cli.items())
 
@@ -154,7 +150,8 @@ def extract_options(function):
     Returns:
     function: Updated function including shared parameters.
     """
-
+    
+    function = click.option("--config-file", type=click.Path())(function)
     function = click.option(
         "--crop-size",
         "-c",
