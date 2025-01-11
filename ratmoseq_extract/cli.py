@@ -491,9 +491,9 @@ def download_flip_file(config_file, output_dir):
 @click.option("--output-file", "-o", type=click.Path(), default="config.yaml")
 @click.option(
     "--camera-type",
-    default="k2",
+    default="azure",
     type=str,
-    help="specify the camera type (k2 or azure), default is k2",
+    help="specify the camera type (k2 or azure), default is azure",
 )
 def generate_config(output_file, camera_type):
 
