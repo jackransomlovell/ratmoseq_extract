@@ -206,7 +206,7 @@ def get_bground(
     bground_type="median",
     frame_stride=500,
     med_scale=5,
-    bg_roi_depth_range=(900, 1000),
+    bg_depth_range=(900, 1000),
     output_dir=None,
     **kwargs,
 ):
@@ -240,7 +240,7 @@ def get_bground(
     else:
         plane, _ = plane_ransac(finfo["dims"], **kwargs)
         bground, first_frame = compute_plane_bground(
-            frames_file, finfo, bg_roi_depth_range, **kwargs
+            frames_file, finfo, bg_depth_range, **kwargs
         )
 
     write_image(bground_path, bground, scale=True)
@@ -261,12 +261,6 @@ def get_strels(config_data):
     """
 
     str_els = {
-        "strel_dilate": select_strel(
-            config_data["bg_roi_shape"], tuple(config_data["bg_roi_dilate"])
-        ),
-        "strel_erode": select_strel(
-            config_data["bg_roi_shape"], tuple(config_data["bg_roi_erode"])
-        ),
         "strel_tail": select_strel(
             config_data["tail_filter_shape"], tuple(config_data["tail_filter_size"])
         ),

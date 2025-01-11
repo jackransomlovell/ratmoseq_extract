@@ -160,6 +160,13 @@ def extract_options(function):
         help="Width and height of cropped mouse image",
     )(function)
     function = click.option(
+    "--bg-depth-range",
+    "-c",
+    default=(900, 1000),
+    type=(int, int),
+    help="Width and height of cropped mouse image",
+    )(function)
+    function = click.option(
         "--num-frames",
         "-n",
         default=None,

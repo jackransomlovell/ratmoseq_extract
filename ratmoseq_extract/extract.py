@@ -12,7 +12,7 @@ import os
 from os.path import join, exists, abspath, basename, dirname
 from os import makedirs, system
 import warnings
-import ruamel.yaml as yaml
+from ruamel.yaml import YAML
 import numpy as np
 import h5py
 
@@ -46,6 +46,7 @@ from ratmoseq_extract.io import (
     filter_warnings,
 )
 
+yaml = YAML(typ='safe', pure=True)
 
 def process_extract_batches(
     input_file,
@@ -239,11 +240,7 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
     if not exists(output_dir):
         os.makedirs(output_dir)
 
-    # Ensure index is int
-    if isinstance(config_data["bg_roi_index"], list):
-        config_data["bg_roi_index"] = config_data["bg_roi_index"][0]
-
-    output_filename = f'results_{config_data["bg_roi_index"]:02d}'
+    output_filename = f'results_00'
     status_filename = join(output_dir, f"{output_filename}.yaml")
     movie_filename = join(output_dir, f"{output_filename}.mp4")
     results_filename = join(output_dir, f"{output_filename}.h5")
@@ -254,7 +251,7 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
         return
 
     with open(status_filename, "w") as f:
-        yaml.safe_dump(status_dict, f)
+        yaml.dump(status_dict, f)
 
     # Get Structuring Elements for extraction
     str_els = get_strels(config_data)
@@ -309,10 +306,9 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
 
     status_dict["complete"] = True
     if status_dict["parameters"].get("true_depth") is None:
-        # config_data.get('true_depth') is numpy.float64 and yaml.safe_dump can't represent the object
         status_dict["parameters"]["true_depth"] = float(config_data.get("true_depth"))
     with open(status_filename, "w") as f:
-        yaml.safe_dump(status_dict, f)
+        yaml.dump(status_dict, f)
 
     return output_dir
 
@@ -560,7 +556,7 @@ def run_slurm_batch_extract(input_dir, to_extract, config_data, skip_extracted=F
             session_key = basename(dirname(depth_file))
 
             with open(output_file, "w") as f:
-                yaml.safe_dump(session_configs.get(session_key, config_data), f)
+                yaml.dump(session_configs.get(session_key, config_data), f)
 
     # Construct sbatch command for slurm
     commands = ""
