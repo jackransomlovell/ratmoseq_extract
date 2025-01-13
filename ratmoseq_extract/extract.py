@@ -25,6 +25,7 @@ from ratmoseq_extract.proc import (
     get_frame_features,
     get_flips,
     compute_scalars,
+    min_max_scale,
 )
 
 from ratmoseq_extract.io import (
@@ -43,7 +44,8 @@ from ratmoseq_extract.io import (
     filter_warnings,
 )
 
-yaml = YAML(typ='safe', pure=True)
+yaml = YAML(typ="safe", pure=True)
+
 
 def process_extract_batches(
     input_file,
@@ -196,15 +198,15 @@ def run_extraction(input_file, config_data):
     status_dict["metadata"] = acquisition_metadata  # update status dict
 
     # Getting number of frames to extract
-    if config_data['num_frames'] is None:
+    if config_data["num_frames"] is None:
         nframes = int(config_data["finfo"]["nframes"])
-    elif config_data['num_frames'] > config_data["finfo"]["nframes"]:
+    elif config_data["num_frames"] > config_data["finfo"]["nframes"]:
         warnings.warn(
             "Requested more frames than video includes, extracting whole recording..."
         )
         nframes = int(config_data["finfo"]["nframes"])
-    elif isinstance(config_data['num_frames'], int):
-        nframes = config_data['num_frames']
+    elif isinstance(config_data["num_frames"], int):
+        nframes = config_data["num_frames"]
 
     # config_data = check_filter_sizes(config_data)
 
@@ -224,9 +226,9 @@ def run_extraction(input_file, config_data):
         offset=first_frame_idx,
     )
 
-    output_dir = config_data['outputdir']
+    output_dir = config_data["outputdir"]
     # set up the output directory
-    if config_data['outputdir'] is None:
+    if config_data["outputdir"] is None:
         output_dir = join(in_dirname, "proc")
     else:
         if in_dirname not in output_dir:
@@ -235,7 +237,7 @@ def run_extraction(input_file, config_data):
     if not exists(output_dir):
         os.makedirs(output_dir)
 
-    output_filename = f'results_00'
+    output_filename = f"results_00"
     status_filename = join(output_dir, f"{output_filename}.yaml")
     movie_filename = join(output_dir, f"{output_filename}.mp4")
     results_filename = join(output_dir, f"{output_filename}.h5")
@@ -367,9 +369,9 @@ def extract_chunk(
 
     # pack clean params into a dict
     clean_params = {
-        'tail_ksize': tail_ksize,
-        'dilate': dilate,
-        'dilation_ksize': dilation_ksize
+        "tail_ksize": tail_ksize,
+        "dilate": dilate,
+        "dilation_ksize": dilation_ksize,
     }
 
     # get the sam2 predictor
@@ -382,7 +384,7 @@ def extract_chunk(
     )
     # apply masks to chunk
     chunk = chunk * masks
-    
+
     # now get the centroid and orientation of the mouse
     features = get_frame_features(
         chunk,

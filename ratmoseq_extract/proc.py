@@ -18,6 +18,25 @@ from os.path import exists, join, dirname
 from ratmoseq_extract.io import read_image, write_image, load_movie_data, get_movie_info
 
 
+def min_max_scale(frames, min_val=0, max_val=255):
+    """
+    Scale frames to min and max values.
+
+    Args:
+    frames (numpy.ndarray): frames x rows x columns
+    min_val (int): minimum value to scale to
+    max_val (int): maximum value to scale to
+
+    Returns:
+    frames (numpy.ndarray): scaled frames
+    """
+
+    frames = (frames - np.min(frames)) / (np.max(frames) - np.min(frames))
+    frames = frames * (max_val - min_val) + min_val
+
+    return frames
+
+
 def plane_fit3(points):
     """
     Fit a plane to 3 points (min number of points for fitting a plane)
@@ -160,9 +179,7 @@ def compute_plane_bground(frames_file, finfo, bg_depth_range=(900, 1000), **kwar
 
     plane, _ = plane_ransac(depth_image, bg_depth_range, **kwargs)
 
-    xx, yy = np.meshgrid(
-        np.arange(frame_shape[1]), np.arange(frame_shape[0])
-    )
+    xx, yy = np.meshgrid(np.arange(frame_shape[1]), np.arange(frame_shape[0]))
     coords = np.vstack((xx.ravel(), yy.ravel()))
 
     plane_im = (np.dot(coords.T, plane[:2]) + plane[3]) / -plane[2]
@@ -347,6 +364,7 @@ def get_flips(frames, flip_file=None, smoothing=None):
         raise
 
     flip_class = np.where(clf.classes_ == 1)[0]
+    frames = min_max_scale(frames)
 
     try:
         probas = clf.predict_proba(
@@ -544,19 +562,17 @@ def clean_frames(
 
     return filtered_frames
 
+
 def clean_mask(mask, tail_ksize=15, dilate=True, dilation_ksize=5, progress_bar=False):
 
     tailfilter = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (tail_ksize,) * 2)
-    mask = cv2.morphologyEx(
-        mask.astype("uint8"), cv2.MORPH_OPEN, tailfilter
-    )
+    mask = cv2.morphologyEx(mask.astype("uint8"), cv2.MORPH_OPEN, tailfilter)
     if dilate:
         mask = cv2.dilate(
             mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilation_ksize,) * 2)
         )
 
     return mask
-
 
 
 def get_frame_features(frames, frame_threshold=10, use_cc=False, progress_bar=False):

@@ -23,7 +23,8 @@ from toolz import valmap
 import shutil
 import ast
 
-yaml = YAML(typ='safe', pure=True)
+yaml = YAML(typ="safe", pure=True)
+
 
 def generate_missing_metadata(sess_dir, sess_name):
     """
@@ -321,7 +322,7 @@ def create_extract_h5(
         h5_file.create_dataset(
             "frames_mask",
             (nframes, config_data["crop_size"][0], config_data["crop_size"][1]),
-            "float32",
+            "int16",
             compression="gzip",
         )
         h5_file["frames_mask"].attrs[
@@ -726,9 +727,7 @@ def read_yaml(yaml_file):
         return yaml.load(f)
 
 
-def write_image(
-    filename, image, scale=True, scale_factor=None, frame_dtype="uint16"
-):
+def write_image(filename, image, scale=True, scale_factor=None, frame_dtype="uint16"):
     """
     Save image data.
 
@@ -766,9 +765,7 @@ def write_image(
     if not exists(directory):
         os.makedirs(directory)
 
-    tifffile.imsave(
-        file, image.astype(frame_dtype), metadata=metadata
-    )
+    tifffile.imsave(file, image.astype(frame_dtype), metadata=metadata)
 
 
 def write_frames_preview(
