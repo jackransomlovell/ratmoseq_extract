@@ -151,12 +151,12 @@ def save_classifier(clf_pipeline, out_path: str):
 
 
 def _extraction_complete(file_path: Path):
-    config = yaml.safe_load(file_path.read_text())
+    config = yaml.load(file_path.read_text())
     return config["complete"]
 
 
 def _find_extractions(data_path: str):
-    files = Path(data_path).glob("**/*.h5")
+    files = Path(data_path).glob("**/results_00.h5")
     files = sorted(f for f in files if _extraction_complete(f.with_suffix(".yaml")))
     if len(set([f.name for f in files])) < len(files):
         files = {f.parent.name + "/" + f.name: f for f in files}
