@@ -120,7 +120,7 @@ def common_avi_options(function):
         help="Path to output file",
     )(function)
     function = click.option(
-        "-b", "--chunk-size", type=int, default=3000, help="Chunk size"
+        "-b", "--chunk-size", type=int, default=500, help="Chunk size"
     )(function)
     function = click.option("--fps", type=float, default=30, help="Video FPS")(function)
     function = click.option(
@@ -276,7 +276,7 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     function = click.option(
         "--compress-chunk-size",
         type=int,
-        default=3000,
+        default=500,
         help="Chunk size for .avi compression",
     )(function)
     function = click.option(
@@ -296,6 +296,12 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     function = click.option(
         "--dlc-filename", type=str, default=None, help="DLC filename for SAM2"
     )(function)
+    function = click.option(
+        "--num-frames", type=int, default=None, help="Number of frames to extract"
+    )(function)
+    function = click.option(
+        "--outputdir", type=str, default='proc', help="Output directory for processed data"
+    )(function)
 
     return function
 
@@ -307,9 +313,6 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     "video of the mouse and saves the output+metadata to h5 files in the given output directory.",
 )
 @click.argument("input-file", type=click.Path(exists=True, resolve_path=False))
-@click.argument("output-dir", type=click.Path(exists=True, resolve_path=False))
-@click.argument("num-frames", type=int)
-@click.argument("skip-completed", type=bool, default=False)
 @click.option(
     "--cluster-type",
     type=click.Choice(["local", "slurm"]),
@@ -318,10 +321,10 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
 )
 @common_avi_options
 @extract_options
-def extract(input_file, output_dir, num_frames, skip_completed, **config_data):
+def extract(input_file, **config_data):
 
     run_extraction(
-        input_file, output_dir, config_data, num_frames=num_frames, skip=skip_completed
+        input_file, config_data
     )
 
 

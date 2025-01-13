@@ -146,17 +146,13 @@ def check_completion_status(status_filename):
     return False
 
 
-def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=False):
+def run_extraction(input_file, config_data):
     """
     Extract depth videos.
 
     Args:
     input_file (str): path to depth file
-    output_dir (str): path to directory to save results in.
     config_data (dict): dictionary containing extraction parameters.
-    num_frames (int): number of frames to extract.
-    skip (bool): indicates whether to skip file if already extracted
-    extract (function): extraction function state
 
     Returns:
     output_dir (str): path to directory containing extraction
@@ -200,15 +196,15 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
     status_dict["metadata"] = acquisition_metadata  # update status dict
 
     # Getting number of frames to extract
-    if num_frames is None:
+    if config_data['num_frames'] is None:
         nframes = int(config_data["finfo"]["nframes"])
-    elif num_frames > config_data["finfo"]["nframes"]:
+    elif config_data['num_frames'] > config_data["finfo"]["nframes"]:
         warnings.warn(
             "Requested more frames than video includes, extracting whole recording..."
         )
         nframes = int(config_data["finfo"]["nframes"])
-    elif isinstance(num_frames, int):
-        nframes = num_frames
+    elif isinstance(config_data['num_frames'], int):
+        nframes = config_data['num_frames']
 
     # config_data = check_filter_sizes(config_data)
 
@@ -228,8 +224,9 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
         offset=first_frame_idx,
     )
 
+    output_dir = config_data['outputdir']
     # set up the output directory
-    if output_dir is None:
+    if config_data['outputdir'] is None:
         output_dir = join(in_dirname, "proc")
     else:
         if in_dirname not in output_dir:
@@ -242,11 +239,6 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
     status_filename = join(output_dir, f"{output_filename}.yaml")
     movie_filename = join(output_dir, f"{output_filename}.mp4")
     results_filename = join(output_dir, f"{output_filename}.h5")
-
-    # Check if session has already been extracted
-    if check_completion_status(status_filename) and skip:
-        print("Skipping...")
-        return
 
     with open(status_filename, "w") as f:
         yaml.dump(status_dict, f)
@@ -372,9 +364,7 @@ def extract_chunk(
         chunk = (bground - chunk).astype(chunk.dtype)
         # Threshold chunk depth values at min and max heights
         chunk = threshold_chunk(chunk, min_height, max_height).astype(int)
-    # print working directory
-    print("Working directory:", os.getcwd())
-    np.save("chunk.npy", chunk)
+
     # pack clean params into a dict
     clean_params = {
         'tail_ksize': tail_ksize,
@@ -390,20 +380,9 @@ def extract_chunk(
     masks, _ = segment_chunk(
         chunk, predictor, sam2_points, clean_params, inference_state=None
     )
-    np.save("masks.npy", masks)
     # apply masks to chunk
     chunk = chunk * masks
-
-    # Denoise the frames before we do anything else
-    # filtered_frames = clean_frames(
-    #     chunk,
-    #     tail_ksize=tail_ksize,
-    #     min_height=min_height,
-    #     dilate=dilate,
-    #     dilation_ksize=dilation_ksize,
-    #     progress_bar=progress_bar,
-    # )
-
+    
     # now get the centroid and orientation of the mouse
     features = get_frame_features(
         chunk,
