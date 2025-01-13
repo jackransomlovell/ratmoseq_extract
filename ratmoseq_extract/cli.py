@@ -302,6 +302,12 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     function = click.option(
         "--outputdir", type=str, default='proc', help="Output directory for processed data"
     )(function)
+    function = click.option(
+        "--use-bground", type=bool, default=False, help="Use a background subtraction model"
+    )(function)
+    function = click.option(
+        "--bground-type", type=str, default='median', help="Which background subtraction model to use"
+    )(function)
 
     return function
 

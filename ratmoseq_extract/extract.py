@@ -208,8 +208,6 @@ def run_extraction(input_file, config_data):
     elif isinstance(config_data["num_frames"], int):
         nframes = config_data["num_frames"]
 
-    # config_data = check_filter_sizes(config_data)
-
     # Compute total number of frames to include from an initial starting point.
     total_frames, first_frame_idx, last_frame_idx = get_frame_range_indices(
         *config_data["frame_trim"], nframes
@@ -245,18 +243,17 @@ def run_extraction(input_file, config_data):
     with open(status_filename, "w") as f:
         yaml.dump(status_dict, f)
 
-    # Get Structuring Elements for extraction
-    # str_els = get_strels(config_data)
 
     roi = np.ones(config_data["finfo"]["dims"][::-1], dtype=np.uint8)
+
+    
     bground_im, first_frame = get_bground(
-        input_file, config_data, output_dir=output_dir
-    )
-    # Debugging option: DTD has no effect on extraction results unless dilate iterations > 1
-    if config_data.get("detected_true_depth", "auto") == "auto":
-        config_data["true_depth"] = np.median(bground_im[roi > 0])
-    else:
-        config_data["true_depth"] = int(config_data["detected_true_depth"])
+        input_file, config_data, output_dir=output_dir, bground_type=config_data["bground_type"]
+        )
+    config_data["true_depth"] = np.median(bground_im[roi > 0])
+
+    if not config_data["use_bground"]:
+        bground_im = None
 
     print("Detected true depth:", config_data["true_depth"])
 

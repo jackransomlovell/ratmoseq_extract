@@ -159,15 +159,16 @@ def _find_extractions(data_path: str):
     files = Path(data_path).glob("**/results_00.h5")
     files = sorted(f for f in files if _extraction_complete(f.with_suffix(".yaml")))
     if len(set([f.name for f in files])) < len(files):
-        files = {f.parent.name + "/" + f.name: f for f in files}
+        files = {f.parents[1].name + '/' + f.name: f for f in files}
     else:
-        files = {f.name: f for f in files}
+        files = {f.parents[1].name: f for f in files}
     return files
 
 
 class FlipClassifierWidget:
-    def __init__(self, data_path: str):
+    def __init__(self, data_path: str, frames_name: str = "frames"):
         self.data_path = Path(data_path)
+        self.frames_name = frames_name
         self.sessions = _find_extractions(data_path)
         # self.selected_frame_ranges_dict = {k: [] for k in self.path_dict}
         self.selected_frame_ranges_dict = defaultdict(list)
@@ -346,8 +347,8 @@ class FlipClassifierWidget:
         self.widgets.loading = True
 
         with h5py.File(self.sessions[event.new], mode="r") as f:
-            self.frame_num_slider.end = f["frames"].shape[0] - 1
-            self.frames = f["frames"][()]
+            self.frame_num_slider.end = f[self.frames_name].shape[0] - 1
+            self.frames = f[self.frames_name][()]
 
         self.widgets.loading = False
 
