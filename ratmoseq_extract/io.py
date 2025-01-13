@@ -317,7 +317,7 @@ def create_extract_h5(
         "3D Numpy array of depth frames (nframes x w x h)." + " Depth values are in mm."
     )
     # Frame Masks for EM Tracking
-    if config_data["use_tracking_model"]:
+    if config_data["sam2_checkpoint"]:
         h5_file.create_dataset(
             "frames_mask",
             (nframes, config_data["crop_size"][0], config_data["crop_size"][1]),
@@ -394,7 +394,7 @@ def create_extract_h5(
     ] = "Computed background image"
 
     # Extract Version
-    extract_version = np.string_(get_distribution("moseq2-extract").version)
+    extract_version = np.string_(get_distribution("ratmoseq-extract").version)
     h5_file.create_dataset("metadata/extraction/extract_version", data=extract_version)
     h5_file["metadata/extraction/extract_version"].attrs[
         "description"
@@ -727,7 +727,7 @@ def read_yaml(yaml_file):
 
 
 def write_image(
-    filename, image, scale=True, scale_factor=None, frame_dtype="uint16", compress=0
+    filename, image, scale=True, scale_factor=None, frame_dtype="uint16"
 ):
     """
     Save image data.
@@ -767,7 +767,7 @@ def write_image(
         os.makedirs(directory)
 
     tifffile.imsave(
-        file, image.astype(frame_dtype), compress=compress, metadata=metadata
+        file, image.astype(frame_dtype), metadata=metadata
     )
 
 

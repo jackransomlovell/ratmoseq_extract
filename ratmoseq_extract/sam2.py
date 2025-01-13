@@ -5,11 +5,11 @@ import pandas as pd
 import torch
 import cv2
 import tempfile
-from ratmoseq_extract.proc import clean_frames
+from ratmoseq_extract.proc import clean_mask
 from sam2.build_sam import build_sam2_video_predictor
 
 
-def load_dlc(csv, bodyparts, frame_range, roi):
+def load_dlc(csv, frame_range):
     """
     Load DLC data from a CSV file and extract the specified body parts.
 
@@ -31,11 +31,12 @@ def load_dlc(csv, bodyparts, frame_range, roi):
     dlc = pd.read_csv(csv, index_col=0, header=[1, 2])
     dlc.columns = [f"{c[0]}_{c[1]}" for c in dlc.columns]
     keypoints_df = dlc[[c for c in dlc.columns if '_x' in c or '_y' in c]]
-    keypoints_df = keypoints_df[[c for c in keypoints_df.columns if c in bodyparts]]
+    keypoints_df = keypoints_df[[c for c in keypoints_df.columns if 'tail' not in c]]
+    keypoints_df = keypoints_df[[c for c in keypoints_df.columns if 'likelihood' not in c]]
     keypoints_df = keypoints_df.loc[frame_range]
     input_point = keypoints_df.iloc[0, :].values.reshape(-1, 2)
     # subtract the ROI offset
-    input_point -= roi[:2]
+    # input_point -= roi[:2]
 
     return input_point
 
@@ -107,7 +108,7 @@ def get_sam2_predictor(sam2_checkpoint):
 
     return predictor
 
-def segment_chunk(chunk, predictor, points, clean_params=None, inference_state=None):
+def segment_chunk(chunk, predictor, point, clean_params=None, inference_state=None):
     """
     Segment a chunk of video frames using a SAM2 predictor.
 
@@ -138,14 +139,13 @@ def segment_chunk(chunk, predictor, points, clean_params=None, inference_state=N
 
         inference_state = predictor.init_state(video_path=tmpdirname)
 
-        input_point = points.values.reshape(-1, 2)
-        input_label = np.ones(input_point.shape[0])
+        input_label = np.ones(point.shape[0])
 
         _, _, out_mask_logits = predictor.add_new_points_or_box(
             inference_state=inference_state,
             frame_idx=0,
             obj_id='mouse',
-            points=input_point,
+            points=point,
             labels=input_label,
         )
 
@@ -154,7 +154,7 @@ def segment_chunk(chunk, predictor, points, clean_params=None, inference_state=N
         for _, _, out_mask_logits in predictor.propagate_in_video(inference_state):
             mask = (out_mask_logits[0] > 0.0).cpu().numpy().squeeze()
             if clean_params is not None:
-                mask = clean_frames(mask, **clean_params)
+                mask = clean_mask(mask, **clean_params)
             masks.append(mask)
         masks = np.array(masks)
 

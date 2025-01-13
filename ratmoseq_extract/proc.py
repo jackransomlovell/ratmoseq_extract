@@ -137,7 +137,7 @@ def plane_ransac(
     return best_plane, dist
 
 
-def compute_plane_bground(frames_file, finfo, bg_roi_depth_range=(900, 1000), **kwargs):
+def compute_plane_bground(frames_file, finfo, bg_depth_range=(900, 1000), **kwargs):
     """
     Compute plane background image from video file.
 
@@ -158,10 +158,10 @@ def compute_plane_bground(frames_file, finfo, bg_roi_depth_range=(900, 1000), **
     ).squeeze()
     frame_shape = depth_image.shape
 
-    plane, _ = plane_ransac(depth_image, bg_roi_depth_range, **kwargs)
+    plane, _ = plane_ransac(depth_image, bg_depth_range, **kwargs)
 
     xx, yy = np.meshgrid(
-        np.arange(frame_shape.shape[1]), np.arange(frame_shape.shape[0])
+        np.arange(frame_shape[1]), np.arange(frame_shape[0])
     )
     coords = np.vstack((xx.ravel(), yy.ravel()))
 
@@ -203,7 +203,7 @@ def compute_median_bground(
 
 def get_bground(
     frames_file,
-    bground_type="median",
+    bground_type="plane",
     frame_stride=500,
     med_scale=5,
     bg_depth_range=(900, 1000),
@@ -227,9 +227,9 @@ def get_bground(
     """
 
     if output_dir is None:
-        bground_path = join(dirname(frames_file), "proc", "bground.tiff")
+        bground_path = join(dirname(frames_file), "proc", "bground.npy")
     else:
-        bground_path = join(output_dir, "bground.tiff")
+        bground_path = join(output_dir, "bground.npy")
 
     finfo = get_movie_info(frames_file, **kwargs)
     if bground_type == "median":
@@ -238,12 +238,12 @@ def get_bground(
         )
         write_image(bground_path, bground, scale=True)
     else:
-        plane, _ = plane_ransac(finfo["dims"], **kwargs)
         bground, first_frame = compute_plane_bground(
             frames_file, finfo, bg_depth_range, **kwargs
         )
 
-    write_image(bground_path, bground, scale=True)
+    # write_image(bground_path, bground, scale=True)
+    np.save(bground_path, bground)
 
     return bground, first_frame
 
@@ -515,7 +515,7 @@ def clean_frames(
     """
 
     # seeing enormous speed gains w/ opencv
-    filtered_frames = frames.copy()
+    filtered_frames = frames.astype().copy()
 
     for i in tqdm(
         range(frames.shape[0]), disable=not progress_bar, desc="Cleaning frames"
@@ -544,6 +544,20 @@ def clean_frames(
 
     return filtered_frames
 
+def clean_mask(mask, tail_ksize=15, dilate=True, dilation_ksize=5, progress_bar=False):
+
+    tailfilter = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (tail_ksize,) * 2)
+    mask = cv2.morphologyEx(
+        mask.astype("uint8"), cv2.MORPH_OPEN, tailfilter
+    )
+    if dilate:
+        mask = cv2.dilate(
+            mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilation_ksize,) * 2)
+        )
+
+    return mask
+
+
 
 def get_frame_features(frames, frame_threshold=10, use_cc=False, progress_bar=False):
     """
@@ -563,13 +577,6 @@ def get_frame_features(frames, frame_threshold=10, use_cc=False, progress_bar=Fa
     """
 
     nframes = frames.shape[0]
-
-    # Get frame mask
-    if type(mask) is np.ndarray and mask.size > 0:
-        has_mask = True
-    else:
-        has_mask = False
-        mask = np.zeros((frames.shape), "uint8")
 
     # Pack contour features into dict
     features = {
@@ -597,10 +604,10 @@ def get_frame_features(frames, frame_threshold=10, use_cc=False, progress_bar=Fa
         for key, value in im_moment_features(cnts[mouse_cnt]).items():
             features[key][i] = value
 
-    return features, mask
+    return features
 
 
-def crop_and_rotate_frames(frames, features, crop_size=(80, 80), progress_bar=False):
+def crop_and_rotate_frames(frames, features, crop_size=(256, 256), progress_bar=False):
     """
     Crop mouse from image and orients it such that the head is pointing right
 
@@ -658,7 +665,7 @@ def crop_and_rotate_frames(frames, features, crop_size=(80, 80), progress_bar=Fa
             1,
         )
         cropped_frames[i] = cv2.warpAffine(
-            use_frame[rr[0] : rr[-1], cc[0] : cc[-1]],
+            use_frame[rr[0] : rr[-1], cc[0] : cc[-1]].astype(np.float32),
             rot_mat,
             (crop_size[0], crop_size[1]),
         )

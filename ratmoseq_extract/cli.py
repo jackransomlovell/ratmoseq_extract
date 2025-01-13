@@ -215,50 +215,16 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
         help="Extract features using largest connected components.",
     )(function)
     function = click.option(
-        "--cable-filter-iters",
-        default=0,
+        "--tail-ksize",
+        default=15,
         type=int,
-        help="Number of cable filter iterations",
+        help="Tail filter kernel size",
     )(function)
     function = click.option(
-        "--cable-filter-shape",
-        default="rectangle",
-        type=str,
-        help="Cable filter shape (rectangle or ellipse)",
-    )(function)
-    function = click.option(
-        "--cable-filter-size",
-        default=(5, 5),
-        type=(int, int),
-        help="Cable filter size (in pixels)",
-    )(function)
-    function = click.option(
-        "--tail-filter-iters",
-        default=1,
+        "--dilation-ksize",
+        default=5,
         type=int,
-        help="Number of tail filter iterations",
-    )(function)
-    function = click.option(
-        "--tail-filter-size", default=(15, 15), type=(int, int), help="Tail filter size"
-    )(function)
-    function = click.option(
-        "--tail-filter-shape", default="ellipse", type=str, help="Tail filter shape"
-    )(function)
-    function = click.option(
-        "--spatial-filter-size",
-        "-s",
-        default=[3],
-        type=int,
-        help="Space prefilter kernel (median filter, must be odd)",
-        multiple=True,
-    )(function)
-    function = click.option(
-        "--temporal-filter-size",
-        "-t",
-        default=[0],
-        type=int,
-        help="Time prefilter kernel (median filter, must be odd)",
-        multiple=True,
+        help="Dilation kernel size",
     )(function)
     function = click.option(
         "--chunk-overlap",
@@ -330,9 +296,6 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     function = click.option(
         "--dlc-filename", type=str, default=None, help="DLC filename for SAM2"
     )(function)
-    function = click.option(
-        "--dlc-bodyparts", type=list, default=None, help="DLC bodyparts for SAM2"
-    )(function)
 
     return function
 
@@ -344,6 +307,9 @@ This is only a debugging parameter, for cases where dilate_iterations > 1, other
     "video of the mouse and saves the output+metadata to h5 files in the given output directory.",
 )
 @click.argument("input-file", type=click.Path(exists=True, resolve_path=False))
+@click.argument("output-dir", type=click.Path(exists=True, resolve_path=False))
+@click.argument("num-frames", type=int)
+@click.argument("skip-completed", type=bool, default=False)
 @click.option(
     "--cluster-type",
     type=click.Choice(["local", "slurm"]),

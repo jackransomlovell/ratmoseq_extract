@@ -21,9 +21,6 @@ from ratmoseq_extract.sam2 import get_sam2_predictor, segment_chunk, load_dlc
 from ratmoseq_extract.proc import (
     crop_and_rotate_frames,
     threshold_chunk,
-    clean_frames,
-    check_filter_sizes,
-    get_strels,
     get_bground,
     get_frame_features,
     get_flips,
@@ -33,14 +30,14 @@ from ratmoseq_extract.proc import (
 from ratmoseq_extract.io import (
     write_extracted_chunk_to_h5,
     make_output_movie,
-    load_movie_data,
+    # load_movie_data,
+    read_frames,
     write_frames_preview,
     handle_extract_metadata,
     get_movie_info,
     get_frame_range_indices,
     scalar_attributes,
     gen_batch_sequence,
-    write_image,
     create_extract_h5,
     read_yaml,
     filter_warnings,
@@ -54,7 +51,7 @@ def process_extract_batches(
     bground_im,
     roi,
     frame_batches,
-    str_els,
+    # str_els,
     output_mov_path,
     scalars=None,
     h5_file=None,
@@ -79,27 +76,28 @@ def process_extract_batches(
 
     Returns:
     """
-
+    tmp_pdir = Path(output_mov_path).parent
     for i, frame_range in enumerate(tqdm(frame_batches, desc="Processing batches")):
-        raw_chunk = load_movie_data(
-            input_file, frame_range, frame_size=bground_im.shape[::-1], **config_data
-        )
-
+        # raw_chunk = load_movie_data(
+        #     input_file, frame_range, frame_size=bground_im.shape[::-1], **config_data
+        # )
+        raw_chunk = read_frames(input_file, frame_range, **config_data)
+        tmp_save = tmp_pdir / f"raw_chunk_{i}.npy"
+        np.save(str(tmp_save), raw_chunk)
         offset = config_data["chunk_overlap"] if i > 0 else 0
 
         # load DLC keypoints if available
         if config_data["dlc_filename"]:
             # get keypoints and bodyparts from config
             csv = Path(input_file).parents[0] / config_data["dlc_filename"]
-            bodyparts = config_data["dlc_bodyparts"]
             # load DLC data
-            sam2_points = load_dlc(csv, bodyparts, frame_range, roi)
+            sam2_points = load_dlc(csv, frame_range)
             # add to config_data
             config_data["sam2_points"] = sam2_points
 
         # Get crop-rotated frame batch
         results = extract_chunk(
-            **config_data, **str_els, chunk=raw_chunk, roi=roi, bground=bground_im
+            **config_data, chunk=raw_chunk, roi=roi, bground=bground_im
         )
 
         # Offsetting frame chunk by CLI parameter defined option: chunk_overlap
@@ -212,7 +210,7 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
     elif isinstance(num_frames, int):
         nframes = num_frames
 
-    config_data = check_filter_sizes(config_data)
+    # config_data = check_filter_sizes(config_data)
 
     # Compute total number of frames to include from an initial starting point.
     total_frames, first_frame_idx, last_frame_idx = get_frame_range_indices(
@@ -254,13 +252,12 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
         yaml.dump(status_dict, f)
 
     # Get Structuring Elements for extraction
-    str_els = get_strels(config_data)
+    # str_els = get_strels(config_data)
 
-    roi = np.ones(config_data["finfo"]["dims"], dtype=np.uint8)
+    roi = np.ones(config_data["finfo"]["dims"][::-1], dtype=np.uint8)
     bground_im, first_frame = get_bground(
         input_file, config_data, output_dir=output_dir
     )
-
     # Debugging option: DTD has no effect on extraction results unless dilate iterations > 1
     if config_data.get("detected_true_depth", "auto") == "auto":
         config_data["true_depth"] = np.median(bground_im[roi > 0])
@@ -298,7 +295,7 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
             input_file=input_file,
             config_data=config_data,
             scalars=scalars,
-            str_els=str_els,
+            # str_els=str_els,
             output_mov_path=movie_filename,
         )
 
@@ -316,17 +313,13 @@ def run_extraction(input_file, output_dir, config_data, num_frames=None, skip=Fa
 # one stop shopping for taking some frames and doing stuff
 def extract_chunk(
     chunk,
-    spatial_filter_size=(3,),
-    temporal_filter_size=None,
-    tail_filter_iters=1,
-    iters_min=0,
-    strel_tail=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)),
-    strel_min=cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+    tail_ksize=15,
+    dilate=True,
+    dilation_ksize=5,
     min_height=10,
     max_height=300,
     use_cc=False,
     bground=None,
-    roi=None,
     flip_classifier=None,
     flip_classifier_smoothing=51,
     progress_bar=True,
@@ -376,19 +369,17 @@ def extract_chunk(
     """
 
     if bground is not None:
-        chunk = (chunk - bground).astype(chunk.dtype)
+        chunk = (bground - chunk).astype(chunk.dtype)
         # Threshold chunk depth values at min and max heights
         chunk = threshold_chunk(chunk, min_height, max_height).astype(int)
-
+    # print working directory
+    print("Working directory:", os.getcwd())
+    np.save("chunk.npy", chunk)
     # pack clean params into a dict
     clean_params = {
-        "prefilter_space": spatial_filter_size,
-        "prefilter_time": temporal_filter_size,
-        "iters_tail": tail_filter_iters,
-        "strel_tail": strel_tail,
-        "iters_min": iters_min,
-        "strel_min": strel_min,
-        "progress_bar": progress_bar,
+        'tail_ksize': tail_ksize,
+        'dilate': dilate,
+        'dilation_ksize': dilation_ksize
     }
 
     # get the sam2 predictor
@@ -399,24 +390,23 @@ def extract_chunk(
     masks, _ = segment_chunk(
         chunk, predictor, sam2_points, clean_params, inference_state=None
     )
+    np.save("masks.npy", masks)
     # apply masks to chunk
     chunk = chunk * masks
 
     # Denoise the frames before we do anything else
-    filtered_frames = clean_frames(
-        chunk,
-        prefilter_space=spatial_filter_size,
-        prefilter_time=temporal_filter_size,
-        iters_tail=tail_filter_iters,
-        strel_tail=strel_tail,
-        iters_min=iters_min,
-        strel_min=strel_min,
-        progress_bar=progress_bar,
-    )
+    # filtered_frames = clean_frames(
+    #     chunk,
+    #     tail_ksize=tail_ksize,
+    #     min_height=min_height,
+    #     dilate=dilate,
+    #     dilation_ksize=dilation_ksize,
+    #     progress_bar=progress_bar,
+    # )
 
     # now get the centroid and orientation of the mouse
-    features, _ = get_frame_features(
-        filtered_frames,
+    features = get_frame_features(
+        chunk,
         frame_threshold=min_height,
         use_cc=use_cc,
         progress_bar=progress_bar,
@@ -432,7 +422,7 @@ def extract_chunk(
 
     # Crop and rotate the filtered frames to be returned and later written
     cropped_filtered_frames = crop_and_rotate_frames(
-        filtered_frames, features, crop_size=crop_size, progress_bar=progress_bar
+        chunk, features, crop_size=crop_size, progress_bar=progress_bar
     )
 
     masks = crop_and_rotate_frames(
