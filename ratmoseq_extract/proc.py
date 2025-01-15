@@ -507,11 +507,8 @@ def im_moment_features(IM):
 def clean_frames(
     frames,
     prefilter_space=(3,),
-    prefilter_time=None,
     strel_tail=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
     iters_tail=None,
-    strel_min=cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
-    iters_min=None,
     progress_bar=False,
 ):
     """
@@ -524,8 +521,6 @@ def clean_frames(
     strel_tail (cv2.StructuringElement): Element for tail filtering.
     iters_tail (int): number of iterations to run opening
     frame_dtype (str): frame encodings
-    strel_min (int): minimum kernel size
-    iters_min (int): minimum number of filtering iterations
     progress_bar (bool): display progress bar
 
     Returns:
@@ -533,14 +528,11 @@ def clean_frames(
     """
 
     # seeing enormous speed gains w/ opencv
-    filtered_frames = frames.astype().copy()
+    filtered_frames = frames.astype(np.uint16).copy()
 
     for i in tqdm(
         range(frames.shape[0]), disable=not progress_bar, desc="Cleaning frames"
     ):
-        # Erode Frames
-        if iters_min is not None and iters_min > 0:
-            filtered_frames[i] = cv2.erode(filtered_frames[i], strel_min, iters_min)
         # Median Blur
         if prefilter_space is not None and np.all(np.array(prefilter_space) > 0):
             for j in range(len(prefilter_space)):
@@ -551,13 +543,6 @@ def clean_frames(
         if iters_tail is not None and iters_tail > 0:
             filtered_frames[i] = cv2.morphologyEx(
                 filtered_frames[i], cv2.MORPH_OPEN, strel_tail, iters_tail
-            )
-
-    # Temporal Median Filter
-    if prefilter_time is not None and np.all(np.array(prefilter_time) > 0):
-        for j in range(len(prefilter_time)):
-            filtered_frames = scipy.signal.medfilt(
-                filtered_frames, [prefilter_time[j], 1, 1]
             )
 
     return filtered_frames
