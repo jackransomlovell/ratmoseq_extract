@@ -26,13 +26,10 @@ yaml = YAML(typ="safe", pure=True)
 
 @dataclass
 class CleanParameters:
-    prefilter_space: tuple = (3,)
-    prefilter_time: Optional[tuple] = None
+    prefilter_space: tuple = (5,)
     strel_tail: Tuple[int, int] = (9, 9)
-    strel_min: Tuple[int, int] = (5, 5)
     iters_tail: Optional[int] = 1
-    iters_min: Optional[int] = None
-    height_threshold: int = 10
+    height_threshold: int = 5
 
 
 def create_training_dataset(
@@ -74,13 +71,10 @@ def create_training_dataset(
     cleaned_frames = clean_frames(
         frames.astype(np.uint16),
         clean_parameters.prefilter_space,
-        clean_parameters.prefilter_time,
         strel_tail=cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, clean_parameters.strel_tail
         ),
-        iters_tail=clean_parameters.iters_tail,
-        strel_min=cv2.getStructuringElement(cv2.MORPH_RECT, clean_parameters.strel_min),
-        iters_min=clean_parameters.iters_min,
+        iters_tail=clean_parameters.iters_tail
     )
     frames = np.concatenate((frames, shifted_frames, cleaned_frames), axis=0)
     print(
