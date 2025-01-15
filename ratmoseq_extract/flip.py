@@ -101,6 +101,31 @@ def batch_apply_pca(frames: np.ndarray, pca: PCA, batch_size: int = 1000) -> np.
     return np.concatenate(output, axis=0).astype(np.float32)
 
 
+from sklearn.base import BaseEstimator, TransformerMixin
+# Custom transformer to reshape 3D data to 2D in batches
+class BatchPCA(BaseEstimator, TransformerMixin):
+    def __init__(self, pca, batch_size=1000):
+        self.pca = pca
+        self.batch_size = batch_size
+
+    def fit(self, X, y=None):
+        # Flatten and fit PCA on the data in batches
+        n_samples, _, _ = X.shape
+        self.pca.fit(flatten(X[:-n_samples // 3]))  # Fit PCA on the flattened data
+        return self
+
+    def transform(self, X):
+        # Transform data in batches
+        n_samples, _, _ = X.shape
+        output = []
+
+        # Process in batches to avoid memory overload
+        for i in range(0, n_samples, self.batch_size):
+            transformed_batch = self.pca.transform(flatten(X[i:i + self.batch_size]))
+            output.append(transformed_batch)
+
+        return np.concatenate(output, axis=0)
+
 def train_classifier(
     data_path: str,
     classifier: str = "SVM",
@@ -116,17 +141,13 @@ def train_classifier(
     flipped = data["flipped"]
 
     print("Fitting PCA")
-    pca = PCA(n_components=n_components)
-    pca.fit(flatten(frames[-len(frames) // 3 :]))
-
+    pca = PCA(n_components=20)
+    batch_size = 100
+    
     pipeline = make_pipeline(
-        FunctionTransformer(batch_apply_pca, kw_args={"pca": pca}, validate=False),
+        BatchPCA(pca, batch_size=batch_size),  # Apply PCA in batches
         StandardScaler(),
-        (
-            RandomForestClassifier(n_estimators=150)
-            if classifier == "RF"
-            else SVC(probability=True)
-        ),
+        RandomForestClassifier(n_estimators=150)
     )
 
     print("Running cross-validation")
