@@ -9,6 +9,7 @@ __pycache__/
 *.ipynb
 *.p
 *.npy
+*.h5
 # Distribution / packaging
 .Python
 build/
