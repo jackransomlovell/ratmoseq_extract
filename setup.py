@@ -32,7 +32,6 @@ def get_version(rel_path):
     else:
         raise RuntimeError("Unable to find version string.")
 
-# note that scikit-learn must == 0.19 since flip classifiers were trained using this version
 setup(
     name='ratmoseq-extract',
     author='Datta Lab',
@@ -40,11 +39,11 @@ setup(
     version=get_version('ratmoseq_extract/__init__.py'),
     platforms=['mac', 'unix'],
     packages=find_packages(),
-    # install_requires=['h5py==2.10.0', 'tqdm>=4.48.0', 'scipy==1.3.2', 'numpy==1.18.3', 'click==7.0',
-    #                   'joblib==0.15.1', 'cytoolz==0.10.1', 'matplotlib==3.1.2', 'statsmodels==0.10.2',
-    #                   'scikit-image==0.16.2', 'scikit-learn==0.20.3', 'opencv-python==4.1.2.30',
-    #                   'ruamel.yaml==0.16.5'],
-    # python_requires='>=3.6,<3.8',
+    install_requires=['h5py>=3.11.0', 'tqdm>=4.64.1', 'scipy==1.9.0', 'numpy>=1.22.4', 'click==8.1.3',
+                      'joblib>=1.4.2', 'cytoolz==1.0.1', 'matplotlib>=3.8.2',
+                      'scikit-image>=0.19.3', 'scikit-learn>=1.6.1', 'opencv-python>=4.5.5.64',
+                      'ruamel.yaml>=0.18.10', 'jupyterlab>=4.3.4'],
+    python_requires='>=3.10',
     entry_points={'console_scripts': ['ratmoseq-extract = ratmoseq_extract.cli:cli']},
     extras_require={
         "docs": [
