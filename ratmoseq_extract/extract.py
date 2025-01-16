@@ -78,14 +78,11 @@ def process_extract_batches(
 
     Returns:
     """
-    tmp_pdir = Path(output_mov_path).parent
     for i, frame_range in enumerate(tqdm(frame_batches, desc="Processing batches")):
         # raw_chunk = load_movie_data(
         #     input_file, frame_range, frame_size=bground_im.shape[::-1], **config_data
         # )
         raw_chunk = read_frames(input_file, frame_range, **config_data)
-        tmp_save = tmp_pdir / f"raw_chunk_{i}.npy"
-        np.save(str(tmp_save), raw_chunk)
         offset = config_data["chunk_overlap"] if i > 0 else 0
 
         # load DLC keypoints if available
@@ -248,12 +245,9 @@ def run_extraction(input_file, config_data):
 
     
     bground_im, first_frame = get_bground(
-        input_file, config_data, output_dir=output_dir, bground_type=config_data["bground_type"]
+        input_file, config_data, output_dir=output_dir
         )
     config_data["true_depth"] = np.median(bground_im[roi > 0])
-
-    if not config_data["use_bground"]:
-        bground_im = None
 
     print("Detected true depth:", config_data["true_depth"])
 
@@ -278,6 +272,9 @@ def run_extraction(input_file, config_data):
             status_dict=status_dict,
             scalars_attrs=scalars_attrs,
         )
+
+        if not config_data["use_bground"]:
+            extraction_data['bground_im'] = None
 
         # Write crop-rotated results to h5 file and write video preview mp4 file
         process_extract_batches(
