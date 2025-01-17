@@ -41,6 +41,6 @@ Now that you have things installed locally, you can first check that it installe
 You should see a help window that walks you through each of the commands you can use. 
 To run extraction you can cd to a session directory and run the following command:
 ```
-ratmoseq-extract extract depth.avi --sam2-checkpoint /n/groups/datta/jlove/data/sam2/checkpoints/sam2.1_hiera_tiny.pt --dlc-filename your_dlc_filename.csv --use-bground True --bground-type plane
+ratmoseq-extract extract depth.avi --sam2-checkpoint /path/to/sam2/checkpoints/sam2.1_hiera_tiny.pt --dlc-filename your_dlc_filename.csv --use-bground True --bground-type plane
 ```
 If you need to run DLC to get keypoints please check here to do so. There is also a notebook that will run DLC then extraction on all the data as well. 
