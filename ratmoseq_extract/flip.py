@@ -1,6 +1,5 @@
 import cv2
 import h5py
-import h5py
 import pickle
 import pickle
 import joblib
@@ -24,13 +23,30 @@ from ratmoseq_extract.proc import clean_frames, min_max_scale
 yaml = YAML(typ="safe", pure=True)
 
 
+def get_flips(frames, flip):
+    flip = joblib.load(flip)
+    return flip.predict(frames)
+
+def apply_flips(h5, flip_classif, smoothing=0, save=True):
+    # apply flips
+    with h5py.File(h5, 'a') as f:
+        frames = f['frames'][:]
+        flips = get_flips(
+            frames, flip_classif
+        )
+        flip_inds = np.where(flips)
+        if save:
+            f['frames'][flip_inds] = np.rot90(
+                frames[flip_inds], k=2, axes=(1, 2)
+            )
+    return flip_inds
+
 @dataclass
 class CleanParameters:
     prefilter_space: tuple = (5,)
     strel_tail: Tuple[int, int] = (9, 9)
     iters_tail: Optional[int] = 1
     height_threshold: int = 5
-
 
 def create_training_dataset(
     data_index_path: str, clean_parameters: Optional[CleanParameters] = None
@@ -169,14 +185,19 @@ def _extraction_complete(file_path: Path):
     config = yaml.load(file_path.read_text())
     return config["complete"]
 
+def _check_h5(file, name):
+    with h5py.File(file, 'r') as f:
+        return name in f
 
-def _find_extractions(data_path: str):
+def _find_extractions(data_path: str, frames_name: str):
     files = Path(data_path).glob("**/results_00.h5")
     files = sorted(f for f in files if _extraction_complete(f.with_suffix(".yaml")))
+    files = [f for f in files if _check_h5(f, frames_name)]
     if len(set([f.name for f in files])) < len(files):
         files = {f.parents[1].name + '/' + f.name: f for f in files}
     else:
         files = {f.parents[1].name: f for f in files}
+    
     return files
 
 
@@ -184,7 +205,7 @@ class FlipClassifierWidget:
     def __init__(self, data_path: str, frames_name: str = "frames"):
         self.data_path = Path(data_path)
         self.frames_name = frames_name
-        self.sessions = _find_extractions(data_path)
+        self.sessions = _find_extractions(data_path, frames_name)
         # self.selected_frame_ranges_dict = {k: [] for k in self.path_dict}
         self.selected_frame_ranges_dict = defaultdict(list)
         self.curr_total_selected_frames = 0
