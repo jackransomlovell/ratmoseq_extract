@@ -41,6 +41,14 @@ Now that you have things installed locally, you can first check that it installe
 You should see a help window that walks you through each of the commands you can use. 
 To run extraction you can cd to a session directory and run the following command:
 ```
-ratmoseq-extract extract depth.avi --sam2-checkpoint /path/to/sam2/checkpoints/sam2.1_hiera_tiny.pt --dlc-filename your_dlc_filename.csv --use-bground True --bground-type plane
+ratmoseq-extract extract depth.avi --sam2-checkpoint /path/to/sam2/checkpoints/sam2.1_hiera_tiny.pt --dlc-filename your_dlc_filename.csv --use-bground True --bground-type plane --num-frames 500
 ```
 If you need to run DLC to get keypoints please check here to do so. There is also a notebook that will run DLC then extraction on all the data as well. 
+
+# Usage
+The pipeline works in the following steps:
+1. Clip IR videos so they are between a given range of values [notebook here](TODO)
+2. Perform keypoint estimation using DLC [notebook here](https://github.com/jackransomlovell/ratmoseq_extract/blob/main/notebooks/infer%20keypoints.ipynb)
+3. Segment the rat using by telling Sam2 where it is in the frame with the keypoints provided [notebook here](https://github.com/jackransomlovell/ratmoseq_extract/blob/main/notebooks/extract%20all%20sessions.ipynb)
+
+You will then have a subdirectory in each of your recordings called `proc`. That houses all the results from the extraction pipeline. Once those all exist you can run `ratmoseq-extract aggregate-results` to copy all the results to a new directory, and then proceed with the rest of the moseq pipeline starting with [pca](https://github.com/dattalab/moseq2-app/wiki/Command-Line-Interface-for-Extraction-and-Modeling#pca)
