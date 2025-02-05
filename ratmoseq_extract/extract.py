@@ -78,6 +78,10 @@ def process_extract_batches(
 
     Returns:
     """
+
+    # get ir_file
+    ir_file = input_file.replace("depth", "ir")
+
     for i, frame_range in enumerate(tqdm(frame_batches, desc="Processing batches")):
         # raw_chunk = load_movie_data(
         #     input_file, frame_range, frame_size=bground_im.shape[::-1], **config_data
@@ -93,10 +97,12 @@ def process_extract_batches(
             sam2_points = load_dlc(csv, frame_range)
             # add to config_data
             config_data["sam2_points"] = sam2_points
+        else:
+            config_data["sam2_points"] = None
 
         # Get crop-rotated frame batch
         results = extract_chunk(
-            **config_data, chunk=raw_chunk, roi=roi, bground=bground_im
+            **config_data, chunk=raw_chunk, ir_file=ir_file, frame_range=frame_range, roi=roi, bground=bground_im
         )
 
         # Offsetting frame chunk by CLI parameter defined option: chunk_overlap
@@ -301,6 +307,8 @@ def run_extraction(input_file, config_data):
 # one stop shopping for taking some frames and doing stuff
 def extract_chunk(
     chunk,
+    frame_range,
+    ir_file,
     tail_ksize=15,
     dilate=True,
     dilation_ksize=5,
@@ -374,7 +382,7 @@ def extract_chunk(
 
     # get masks from sam2
     masks, _ = segment_chunk(
-        chunk, predictor, sam2_points, clean_params, inference_state=None
+        chunk, frame_range, ir_file, predictor, sam2_points, clean_params, inference_state=None
     )
     # apply masks to chunk
     chunk = chunk * masks

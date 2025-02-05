@@ -6,7 +6,25 @@ import torch
 import cv2
 import tempfile
 from ratmoseq_extract.proc import clean_mask
+from ratmoseq_extract.io import read_frames
 from sam2.build_sam import build_sam2_video_predictor
+import deeplabcut.pose_estimation_tensorflow.core as core
+
+def infer_keypoints(ir_file, frame_range, predictor):
+    
+    # load data
+    frames = read_frames(ir_file, frame_range)
+    frames = np.clip(frames, 0, 1000).astype(np.uint16)
+    frames = frames / frames.max() * 255
+
+    # Load DLC model
+    cfg = "path_to_config.yaml"
+    model = core.load_model(cfg)
+
+    # Assume frames_np is your NumPy array (frames, height, width, channels)
+    keypoints = model.predict(frames)
+
+    return keypoints
 
 
 def load_dlc(csv, frame_range):
@@ -108,7 +126,7 @@ def get_sam2_predictor(sam2_checkpoint):
 
     return predictor
 
-def segment_chunk(chunk, predictor, point, clean_params=None, inference_state=None):
+def segment_chunk(chunk, frame_range, ir_file, predictor, point=None, clean_params=None, inference_state=None):
     """
     Segment a chunk of video frames using a SAM2 predictor.
 
@@ -138,8 +156,10 @@ def segment_chunk(chunk, predictor, point, clean_params=None, inference_state=No
         save_frames_to_jpg(chunk, tmpdirname)
 
         inference_state = predictor.init_state(video_path=tmpdirname)
-
-        input_label = np.ones(point.shape[0])
+        if point is not None:
+            input_label = np.ones(point.shape[0])
+        else:
+            input_label = infer_keypoints(ir_file, frame_range, predictor)
 
         _, _, out_mask_logits = predictor.add_new_points_or_box(
             inference_state=inference_state,
