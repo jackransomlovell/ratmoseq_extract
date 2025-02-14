@@ -47,7 +47,7 @@ If you need to run DLC to get keypoints please check here to do so. There is als
 
 # Usage
 The pipeline works in the following steps:
-1. Clip IR videos so they are between a given range of values [notebook here](TODO)
+1. Clip IR videos so they are between a given range of values [notebook here](https://github.com/jackransomlovell/ratmoseq_extract/blob/main/notebooks/clip%20ir.ipynb)
 2. Perform keypoint estimation using DLC [notebook here](https://github.com/jackransomlovell/ratmoseq_extract/blob/main/notebooks/infer%20keypoints.ipynb)
 3. Segment the rat using by telling Sam2 where it is in the frame with the keypoints provided [notebook here](https://github.com/jackransomlovell/ratmoseq_extract/blob/main/notebooks/extract%20all%20sessions.ipynb)
 
