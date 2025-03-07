@@ -8,23 +8,23 @@ import tempfile
 from ratmoseq_extract.proc import clean_mask
 from ratmoseq_extract.io import read_frames
 from sam2.build_sam import build_sam2_video_predictor
-import deeplabcut.pose_estimation_tensorflow.core as core
+# import deeplabcut.pose_estimation_tensorflow.core as core
 
-def infer_keypoints(ir_file, frame_range, predictor):
+# def infer_keypoints(ir_file, frame_range, predictor):
     
-    # load data
-    frames = read_frames(ir_file, frame_range)
-    frames = np.clip(frames, 0, 1000).astype(np.uint16)
-    frames = frames / frames.max() * 255
+#     # load data
+#     frames = read_frames(ir_file, frame_range)
+#     frames = np.clip(frames, 0, 1000).astype(np.uint16)
+#     frames = frames / frames.max() * 255
 
-    # Load DLC model
-    cfg = "path_to_config.yaml"
-    model = core.load_model(cfg)
+#     # Load DLC model
+#     cfg = "path_to_config.yaml"
+#     model = core.load_model(cfg)
 
-    # Assume frames_np is your NumPy array (frames, height, width, channels)
-    keypoints = model.predict(frames)
+#     # Assume frames_np is your NumPy array (frames, height, width, channels)
+#     keypoints = model.predict(frames)
 
-    return keypoints
+#     return keypoints
 
 
 def load_dlc(csv, frame_range):
