@@ -155,7 +155,7 @@ def extract_options(function):
     function = click.option(
         "--crop-size",
         "-c",
-        default=(256, 256),
+        default=(180, 180),
         type=(int, int),
         help="Width and height of cropped mouse image",
     )(function)
