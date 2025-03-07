@@ -23,9 +23,27 @@ from ratmoseq_extract.proc import clean_frames, min_max_scale
 yaml = YAML(typ="safe", pure=True)
 
 
-def get_flips(frames, flip):
-    flip = joblib.load(flip)
-    return flip.predict(frames)
+def get_flips(frames, flip_path):
+    """Get flip predictions for frames using a trained classifier.
+    
+    Args:
+        frames (np.ndarray): Input frames to classify
+        flip_path (str): Path to saved classifier pipeline
+        
+    Returns:
+        np.ndarray: Binary predictions indicating which frames should be flipped
+    """
+    try:
+        # Load the classifier pipeline with custom persistence
+        with open(flip_path, 'rb') as f:
+            flip = pickle.load(f)
+        # Get predictions
+        preds = flip.predict(frames)
+        return preds
+    except Exception as e:
+        print(f"Error loading flip classifier: {e}")
+        # Return no flips if classifier fails
+        return np.zeros(len(frames), dtype=bool)
 
 def apply_flips(h5, flip_classif, smoothing=0, save=True):
     # apply flips
@@ -177,7 +195,14 @@ def train_classifier(
 
 
 def save_classifier(clf_pipeline, out_path: str):
-    joblib.dump(clf_pipeline, out_path)
+    """Save the trained classifier pipeline.
+    
+    Args:
+        clf_pipeline: Trained sklearn pipeline
+        out_path (str): Path to save the classifier
+    """
+    with open(out_path, 'wb') as f:
+        pickle.dump(clf_pipeline, f)
     print(f"Classifier saved to {out_path}")
 
 
