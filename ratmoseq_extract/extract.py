@@ -15,7 +15,7 @@ import warnings
 from ruamel.yaml import YAML
 import numpy as np
 import h5py
-
+import joblib
 
 from ratmoseq_extract.sam2 import get_sam2_predictor, segment_chunk, load_dlc
 from ratmoseq_extract.proc import (
@@ -43,6 +43,7 @@ from ratmoseq_extract.io import (
     read_yaml,
     filter_warnings,
 )
+from ratmoseq_extract.flip import get_flips
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -319,7 +320,7 @@ def extract_chunk(
     flip_classifier=None,
     flip_classifier_smoothing=51,
     progress_bar=True,
-    crop_size=(256, 256),
+    crop_size=(180, 180),
     true_depth=950,
     compute_raw_scalars=False,
     sam2_checkpoint=None,
@@ -414,11 +415,8 @@ def extract_chunk(
 
     # Orient mouse to face east
     if flip_classifier:
-        # get frame indices of incorrectly orientation
-        flips = get_flips(
-            cropped_filtered_frames, flip_classifier, flip_classifier_smoothing
-        )
-        flip_indices = np.where(flips)
+        flips = get_flips(cropped_frames, flip_classifier)
+        flip_indices = np.where(flips == 1)[0]
 
         # apply flips
         cropped_frames[flip_indices] = np.rot90(
