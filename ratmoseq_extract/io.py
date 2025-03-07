@@ -1,4 +1,5 @@
 import numpy as np
+from pathlib import Path
 import cv2
 import subprocess
 from tqdm import tqdm
@@ -2129,3 +2130,97 @@ def read_image(filename, scale=True, scale_key="scale_factor"):
             image = image * (scale_factor[1] - scale_factor[0]) + scale_factor[0]
 
     return image
+
+def get_depth_files(folder: Path) -> list[Path]:
+    return list(folder.glob("**/depth.[da][av][ti]"))
+
+def not_extracted(file: Path, debug=False):
+    if file.name.endswith('filepart'):
+        return False
+
+    extracted_files = sorted(file.parent.glob("proc*/results_00.h5"))
+
+    extracted = len(extracted_files) > 0
+    if extracted:
+        _extracted = []
+        _complete = []
+        for _file in extracted_files:
+            try:
+                with h5py.File(_file, 'r') as h5f:
+                    list(h5f)
+                _extracted.append(True)
+                with open(_file.with_suffix(".yaml"), "r") as conf_f:
+                    config = yaml.load(conf_f)
+                _complete.append(config["complete"])
+            except Exception as e:
+                if debug:
+                    print(e)
+                _extracted.append(False)
+                _complete.append(False)
+        if all(not x for x in _extracted):
+            return True
+        if all(not x for x in _complete):
+            return True
+    return not extracted
+
+def no_ir_clipped(file: Path) -> bool:
+    return not (file.parent / "ir_clipped.avi").exists()
+
+def no_keypoints(file: Path, keypoint_name: str) -> bool:
+    return not (file.parent / f"{keypoint_name}.csv").exists()
+
+def clip_ir(filename, output_file, chunk_size=100, fps=30, pixel_format="gray16le", movie_dtype="uint16", frame_size=None, mapping="DEPTH", finfo=None, **kwargs):
+    if finfo is None:
+        finfo = get_video_info(filename, **kwargs)
+    
+    if not frame_size:
+        frame_size = finfo["dims"]
+    
+    total_frames = finfo["nframes"]
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    video_writer = cv2.VideoWriter(str(output_file), fourcc, fps, (frame_size[0], frame_size[1]), isColor=False)
+    
+    for start in range(0, total_frames, chunk_size):
+        end = min(start + chunk_size, total_frames)
+        command = [
+            "ffmpeg", "-loglevel", "fatal", "-ss", str(datetime.timedelta(seconds=start / fps)), "-i", filename,
+            "-vframes", str(end - start), "-f", "image2pipe", "-s", f"{frame_size[0]}x{frame_size[1]}",
+            "-pix_fmt", pixel_format, "-vcodec", "rawvideo", "-"
+        ]
+        
+        if isinstance(mapping, str):
+            mapping_dict = get_stream_names(filename)
+            mapping = mapping_dict.get(mapping, 0)
+        
+        if filename.endswith((".mkv", ".avi")):
+            command += ["-map", f"0:{mapping}", "-vsync", "0"]
+        
+        pipe = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = pipe.communicate()
+        
+        if err:
+            print("Error:", err)
+            continue
+        
+        video_chunk = np.frombuffer(out, dtype=movie_dtype).reshape((end - start, frame_size[1], frame_size[0]))
+        
+        # Clipping and normalization
+        video_chunk = np.clip(video_chunk, 0, 1000)
+        video_chunk = (video_chunk / video_chunk.max() * 255).astype(np.uint8)
+        
+        for frame in video_chunk:
+            video_writer.write(frame)
+    
+    video_writer.release()
+
+
+from toolz import curry
+@curry
+def hasnt_key(path, key):
+    try:
+        with h5py.File(path, "r") as h5f:
+            return key not in h5f
+    except Exception as e:
+        print(e)
+        print("Error loading", path)
+        return False
