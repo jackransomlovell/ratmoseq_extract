@@ -4,7 +4,8 @@ def deeplabcut_env = "/home/jal5475/.miniconda/envs/DEEPLABCUT"
 def sizenorm_env = "/home/jal5475/.miniconda/envs/sizenorm"
 
 // set workflow parameters - these can be modified from the command line
-params.data_path = "/n/groups/datta/jlove/data/rat_seq/data_managment/habitat/fmr1"
+// params.data_path = "/n/groups/datta/jlove/data/rat_seq/data_managment/habitat/fmr1"
+params.data_path = "/n/groups/datta/jlove/data/rat_seq/lesion"
 params.size_norm_name = "size_norm_v1"
 params.keypoint_name = "ir_clippedDLC_resnet50_KeypointMoSeqDLCOct18shuffle1_50000"
 params.dlc_config = "/n/groups/datta/jlove/data/rat_seq/rat_seq_paper/keypoint_model/config-v2.yaml"
@@ -40,7 +41,6 @@ process find_ir_clipped_files {
     path = Path("${params.data_path}")
     files = get_depth_files(path)
     files = list(filter(no_ir_clipped, files))
-    files = files[:3]
     with open("ir_clipped_files.txt", "w") as f:
         for file in files:
             f.write(str(file) + "\\n")
@@ -87,7 +87,6 @@ process find_keypointable_files {
     files = get_depth_files(path)
     files = list(filter(lambda x: not no_ir_clipped(x), files))
     files = list(filter(lambda x: no_keypoints(x, "${params.keypoint_name}"), files))
-    files = files[:3]
 
     with open("keypointable_files.txt", "w") as f:
         for file in files:
@@ -96,9 +95,10 @@ process find_keypointable_files {
 }
 
 process extract_keypoints {
-    label "gpu"
+    beforeScript "module load gcc/9.2.0 && module load cuda/11.2"
+    label "gpu_quad"
     memory 16.GB
-    time { 20.m * task.attempt }
+    time { 30.m * task.attempt }
     maxRetries 2
     conda deeplabcut_env 
 
@@ -113,7 +113,7 @@ process extract_keypoints {
     #!/bin/env python
     import deeplabcut 
     
-    videos = "${keypointable_files}".strip()[1:-1].split(",")
+    videos = "${keypointable_files}".strip().split(",")
     videos = [v.strip() for v in videos]
     
     config_path = "${params.dlc_config}"
@@ -140,7 +140,6 @@ process find_extractable_files {
     path = Path("${params.data_path}")
     files = get_depth_files(path)
     files = list(filter(not_extracted, files))
-    files = files[:3]
     with open("extractable_files.txt", "w") as f:
         for file in files:
             f.write(str(file) + "\\n")
@@ -196,6 +195,9 @@ process compress {
 process find_files_to_normalize {
     executor "local"
     conda ratmoseq_env
+
+    input:
+    val extraction_results
 
     output:
     path "files_to_normalize.txt"
@@ -261,44 +263,49 @@ process size_normalize {
     """
 }
 
+
+
 workflow {
-    // Find files that need IR clipping
-    files = find_ir_clipped_files()
-    
-    // Clip IR for first 3 files that need it
-    files = files.map { it.readLines() }
-        .flatten()
-        .filter { it != "" && it != null && it != "\n" }
+     // Find files that need IR clipping
+     files = find_ir_clipped_files()
+     
+     // Clip IR for first 3 files that need it
+     files = files.map { it.readLines() }
+         .flatten()
+         .filter { it != "" && it != null && it != "\n" }
+ 
+     clip_ir(files)
+ 
+     // Find files that need keypoints
+     files = find_keypointable_files()
+ 
+     // Extract keypoints
+     files = files.map { it.readLines() }
+         .flatten()
+         .filter { it != "" && it != null && it != "\n" }
+ 
+     extract_keypoints(files)
 
-    clip_ir(files)
-
-    // Find files that need keypoints
-    files = find_keypointable_files()
-
-    // Extract keypoints
-    files = files.map { it.readLines() }
-        .flatten()
-        .filter { it != "" && it != null && it != "\n" }
-
-    extract_keypoints(files)
-
-    // Find files that need to be extracted
-    files = find_extractable_files()
-
-    // Extract
-    files = files.map { it.readLines() }
-        .flatten()
-        .filter { it != "" && it != null && it != "\n" }
-
-    extract(files)
-
-    // Find files that need to be size normalized
-    files = find_files_to_normalize()
-    
-    // Apply size normalization to files
-    files = files.map { it.readLines() }
-        .flatten()
-        .filter { it != "" && it != null && it != "\n" }
-
-    size_normalize(files)
+ 
+     // Find files that need to be extracted
+     files = find_extractable_files()
+ 
+     // Extract
+     files = files.map { it.readLines() }
+         .flatten()
+         .filter { it != "" && it != null && it != "\n" }
+ 
+     files = extract(files)
+ 
+     // Find files that need to be size normalized
+     files = find_files_to_normalize(files.collect())
+     
+     // Apply size normalization to files
+     files = files.map { it.readLines() }
+         .flatten()
+         .filter { it != "" && it != null && it != "\n" }
+         .collate(25)
+ 
+ 
+     size_normalize(files)
 }
