@@ -10,6 +10,8 @@ __pycache__/
 *.npy
 *.h5
 # Distribution / packaging
+.nextflow*
+work/
 .Python
 build/
 develop-eggs/

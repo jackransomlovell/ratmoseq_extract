@@ -5,9 +5,9 @@ def sizenorm_env = "/home/jal5475/.miniconda/envs/sizenorm"
 
 // set workflow parameters - these can be modified from the command line
 // params.data_path = "/n/groups/datta/jlove/data/rat_seq/data_managment/habitat/fmr1"
-params.data_path = "/n/groups/datta/jlove/data/rat_seq/lesion"
-params.size_norm_name = "size_norm_v1"
-params.keypoint_name = "ir_clippedDLC_resnet50_KeypointMoSeqDLCOct18shuffle1_50000"
+params.data_path = "/n/groups/datta/jlove/data/rat_seq/rat_seq_paper/data/14weeks"
+params.size_norm_name = "'recon-v3-25-03-02'"
+params.keypoint_name = "ir_clippedDLC_resnet50_KeypointMoSeqDLCOct18shuffle1_50000_filtered"
 params.dlc_config = "/n/groups/datta/jlove/data/rat_seq/rat_seq_paper/keypoint_model/config-v2.yaml"
 params.sam2_checkpoint = "/n/groups/datta/jlove/data/sam2/checkpoints/sam2.1_hiera_tiny.pt"
 params.flip_classifier = "/n/groups/datta/jlove/data/rat_seq/rat_seq_paper/data/14weeks-flip.p"
@@ -58,6 +58,9 @@ process clip_ir {
     input:
     val ir_file
 
+    output:
+    val ir_file
+
     script:
     """
     #!/bin/env python
@@ -74,6 +77,9 @@ process find_keypointable_files {
     executor "local"
     conda ratmoseq_env
 
+    // input:
+    // val ir_clipped_files
+
     output:
     path "keypointable_files.txt"
 
@@ -87,6 +93,7 @@ process find_keypointable_files {
     files = get_depth_files(path)
     files = list(filter(lambda x: not no_ir_clipped(x), files))
     files = list(filter(lambda x: no_keypoints(x, "${params.keypoint_name}"), files))
+    files = [f.parent / 'ir_clipped.avi' for f in files]
 
     with open("keypointable_files.txt", "w") as f:
         for file in files:
@@ -115,17 +122,24 @@ process extract_keypoints {
     
     videos = "${keypointable_files}".strip().split(",")
     videos = [v.strip() for v in videos]
+    videos = [v.replace('depth.avi', 'ir_clipped.avi') for v in videos]
     
     config_path = "${params.dlc_config}"
-    deeplabcut.analyze_videos(config_path, videos, videotype=".avi")
-    deeplabcut.filterpredictions(config_path, videos, videotype=".avi")
-    deeplabcut.create_labeled_video(config_path, videos, filtered=True, pcutoff=0.3)
+    
+    for video in videos:
+        print(f"Processing {video}")
+        deeplabcut.analyze_videos(config_path, [video], videotype=".avi")
+        deeplabcut.filterpredictions(config_path, [video], videotype=".avi")
+        deeplabcut.create_labeled_video(config_path, [video], filtered=True, pcutoff=0.3)
     """
 }
 
 process find_extractable_files {
     executor "local"
     conda ratmoseq_env 
+
+    input:
+    val keypointed_files
 
     output:
     path "extractable_files.txt"
@@ -266,46 +280,54 @@ process size_normalize {
 
 
 workflow {
-     // Find files that need IR clipping
-     files = find_ir_clipped_files()
-     
-     // Clip IR for first 3 files that need it
-     files = files.map { it.readLines() }
-         .flatten()
-         .filter { it != "" && it != null && it != "\n" }
- 
-     clip_ir(files)
- 
-     // Find files that need keypoints
-     files = find_keypointable_files()
- 
-     // Extract keypoints
-     files = files.map { it.readLines() }
-         .flatten()
-         .filter { it != "" && it != null && it != "\n" }
- 
-     extract_keypoints(files)
-
- 
-     // Find files that need to be extracted
-     files = find_extractable_files()
- 
-     // Extract
-     files = files.map { it.readLines() }
-         .flatten()
-         .filter { it != "" && it != null && it != "\n" }
- 
-     files = extract(files)
- 
-     // Find files that need to be size normalized
-     files = find_files_to_normalize(files.collect())
-     
-     // Apply size normalization to files
-     files = files.map { it.readLines() }
-         .flatten()
-         .filter { it != "" && it != null && it != "\n" }
-         .collate(25)
- 
- 
-     size_normalize(files)
+    // Find files that need IR clipping
+    // ir_files = find_ir_clipped_files()
+    // ir_files.view()
+    
+    // // Clip IR for all files that need it
+    // ir_files = ir_files.map { it.readLines() }
+    //     .flatten()
+    //     .filter { it != "" && it != null && it != "\n" }
+    
+    // // Wait for IR clipping to complete before proceeding
+    // clipped_files = clip_ir(ir_files)
+    
+    // Find files that need keypoints (after IR clipping)
+    // keypoint_files = find_keypointable_files(clipped_files)
+    keypoint_files = find_keypointable_files()
+    keypoint_files.view()
+    
+    // Extract keypoints
+    keypoint_files = keypoint_files.map { it.readLines() }
+        .flatten()
+        .filter { it != "" && it != null && it != "\n" }
+        .collate(25)
+    
+    // Wait for keypoint extraction to complete
+    keypointed_files = extract_keypoints(keypoint_files)
+    
+    // Find files that need to be extracted
+    extractable_files = find_extractable_files(keypointed_files)
+    extractable_files.view()
+    
+    // Extract
+    extractable_files = extractable_files.map { it.readLines() }
+        .flatten()
+        .filter { it != "" && it != null && it != "\n" }
+    
+    // Wait for extraction to complete
+    extracted_files = extract(extractable_files)
+    
+    // Find files that need to be size normalized
+    files_to_normalize = find_files_to_normalize(extracted_files.collect())
+    files_to_normalize.view()
+    
+    // Apply size normalization to files
+    files_to_normalize = files_to_normalize.map { it.readLines() }
+        .flatten()
+        .filter { it != "" && it != null && it != "\n" }
+        .collate(25)
+    
+    // Wait for size normalization to complete
+    size_normalize(files_to_normalize)
 }

@@ -2176,6 +2176,8 @@ def clip_ir(filename, output_file, chunk_size=100, fps=30, pixel_format="gray16l
     if not frame_size:
         frame_size = finfo["dims"]
     
+    filename = str(filename)
+
     total_frames = finfo["nframes"]
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     video_writer = cv2.VideoWriter(str(output_file), fourcc, fps, (frame_size[0], frame_size[1]), isColor=False)
